@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+
+import yaml
+
+
+OUT_PATH = Path("experiments/configs/library_pipeline_example.yaml")
+
+
+EXAMPLE_EXPERIMENT = {
+    "meta": {
+        "experiment_name": "library_pipeline_example",
+        "output_root": "runs/experiments",
+    },
+    "runtime": {
+        "env_file": ".env",
+    },
+    "cluster": {
+        "partition": "tamper_resistance",
+        "account": "replace_me",
+        "gres": "gpu:1",
+        "time_train": "02:00:00",
+        "time_attack": "02:00:00",
+        "time_benign": "01:00:00",
+    },
+    "default_attack_dataset": "adv_behaviors",
+    "classifiers": ["strong_reject", "local:ensemble"],
+    "models": {
+        "llama3_8b": {
+            "from_registry": "meta-llama/Meta-Llama-3-8B-Instruct",
+        },
+        "qwen3_8b": {
+            "from_registry": "Qwen/Qwen3-8B",
+        },
+    },
+    "datasets": {
+        "jbb_inpainting_subset": {
+            "name": "jbb_behaviors",
+            "seed": 0,
+            "idx": list(range(10)),
+            "shuffle": True,
+        },
+    },
+    "defenses": {
+        "base_llama3": {
+            "script": None,
+            "base_model": "llama3_8b",
+            "output_subdir": "base_llama3",
+        },
+        "cb_llama3": {
+            "script": "defenses/honeypot_cb.py",
+            "base_model": "llama3_8b",
+            "output_subdir": "cb_llama3",
+            "data": {
+                "cb_path": "data/circuit_breakers_train.json",
+                "honeypot_path": "data/honeypots_qwen_fixed.jsonl",
+            },
+            "train_args": {
+                "margin_ce": 10.0,
+                "w_dpo_hp_over_harm": 1.0,
+                "dpo_beta": 2.0,
+                "dpo_margin": 1.0,
+            },
+        },
+    },
+    "attacks": {
+        "inpainting_smoke": {
+            "attack": "inpainting",
+            "dataset": "jbb_inpainting_subset",
+            "attack_overrides": {
+                "num_samples_per_behavior": 64,
+            },
+            "classifiers": ["strong_reject"],
+        },
+        "direct_baseline": {
+            "attack": "direct",
+            "dataset": "adv_behaviors",
+            "classifiers": ["strong_reject"],
+        },
+    },
+    "benign_evals": {
+        "gsm8k_smoke": {
+            "tasks": "gsm8k",
+            "limit": 25,
+        }
+    },
+    "pipelines": {
+        "base_llama3": [
+            {"stage": "attack", "defense": "base_llama3", "attacks": ["inpainting_smoke", "direct_baseline"]},
+            {"stage": "benign_eval", "defense": "base_llama3", "benign_eval": "gsm8k_smoke"},
+        ],
+        "cb_llama3": [
+            {"stage": "train", "defense": "cb_llama3"},
+            {"stage": "attack", "defense": "cb_llama3", "attacks": ["inpainting_smoke", "direct_baseline"]},
+            {"stage": "benign_eval", "defense": "cb_llama3", "benign_eval": "gsm8k_smoke"},
+        ],
+    },
+}
+
+
+def main():
+    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OUT_PATH.write_text(yaml.safe_dump(EXAMPLE_EXPERIMENT, sort_keys=False), encoding="utf-8")
+    print(f"Wrote {OUT_PATH}")
+
+
+if __name__ == "__main__":
+    main()

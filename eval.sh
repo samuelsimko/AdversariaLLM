@@ -1,0 +1,1 @@
+source venv/bin/activate && source ../honeypot_llm_defense/.env && python scripts/evaluate_jepa_guardrail.py --run_dir runs/jepa_ce_1000step_allpairs --output_json runs/jepa_ce_1000step_allpairs/guardrail_eval.json --centroid_per_category 64 --eval_per_category 64 --benign_centroid_samples 512 --benign_eval_samples 512 --jailbreak_eval_samples 512 --batch_size 8 --max_length 256

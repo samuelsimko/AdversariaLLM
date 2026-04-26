@@ -1,0 +1,120 @@
+meta:
+  experiment_name: align_jepa_qwen3_long_inpainting
+  output_root: runs/experiments
+
+runtime:
+  python_bin: /workspace/AdversariaLLM/venv/bin/python
+  venv_activate: /workspace/AdversariaLLM/venv/bin/activate
+
+cluster:
+  partition: tamper_resistance
+  account: replace_me
+  gres: gpu:1
+  num_gpus: 1
+  time_train: "16:00:00"
+  time_attack: "06:00:00"
+  time_benign: "02:00:00"
+
+default_attack_dataset: adv_behaviors_velocity_subset
+
+classifiers:
+  - local:strongreject
+  - local:harmbench
+
+models:
+  qwen3_8b:
+    from_registry: Qwen/Qwen3-8B
+
+datasets:
+  adv_behaviors_velocity_subset:
+    name: adv_behaviors
+    seed: 0
+    idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    shuffle: true
+  jbb_velocity_inpainting_subset:
+    name: jbb_behaviors
+    seed: 0
+    idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    shuffle: true
+
+defenses:
+  align_jepa_qwen3_long:
+    script: defenses/align_jepa.py
+    base_model: qwen3_8b
+    output_subdir: align_jepa_qwen3_long
+    train_args:
+      reverse_path: reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl
+      num_max_steps: 4000
+      batch_size: 8
+      grad_accum: 2
+      ultrachat_samples: 100000
+      align_limit: 500000
+      max_length: 256
+      lr: 0.0001
+      w_benign: 0.5
+      w_align: 1.0
+      w_benign_kl: 0.2
+      num_pred_tokens: 1
+      align_layer: -1
+      align_metric: cosine
+      save_total_limit: 2
+      logging_steps: 10
+      save_steps: 500
+      lora_r: 32
+      lora_alpha: 16
+      lora_dropout: 0.05
+      target_modules: q_proj,v_proj
+
+attacks:
+  direct_align_jepa:
+    attack: direct
+    dataset: adv_behaviors_velocity_subset
+  prefilling_align_jepa:
+    attack: prefilling
+    dataset: adv_behaviors_velocity_subset
+    attack_overrides:
+      batch_size: 64
+  bon_align_jepa:
+    attack: bon
+    dataset: adv_behaviors_velocity_subset
+    attack_overrides:
+      num_steps: 200
+      sigma: 0.4
+  gcg_align_jepa_fast:
+    attack: gcg
+    dataset: adv_behaviors_velocity_subset
+    attack_overrides:
+      num_steps: 40
+      search_width: 64
+      batch_size: 32
+      topk: 64
+  soft_prompt_align_jepa:
+    attack: soft_prompt
+    dataset: adv_behaviors_velocity_subset
+  inpainting_align_jepa:
+    attack: inpainting
+    dataset: jbb_velocity_inpainting_subset
+    attack_overrides:
+      num_samples_per_behavior: 64
+
+benign_evals:
+  gsm8k_mmlu_smoke:
+    tasks: gsm8k,mmlu
+    limit: 200
+
+pipelines:
+  align_jepa_qwen3_long:
+    - stage: train
+      defense: align_jepa_qwen3_long
+    - stage: attack
+      defense: align_jepa_qwen3_long
+      attacks:
+        - direct_align_jepa
+        - prefilling_align_jepa
+        - bon_align_jepa
+        - gcg_align_jepa_fast
+        - soft_prompt_align_jepa
+        - inpainting_align_jepa
+    - stage: benign_eval
+      defense: align_jepa_qwen3_long
+      benign_eval: gsm8k_mmlu_smoke

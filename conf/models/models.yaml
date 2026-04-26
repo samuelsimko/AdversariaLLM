@@ -142,6 +142,15 @@ meta-llama/Meta-Llama-3-8B-Instruct:
   dtype: bfloat16
   chat_template: llama-3-instruct
   trust_remote_code: True
+samuelsimko/Meta-Llama-3-8B-Instruct-Triplet:
+  id: samuelsimko/Meta-Llama-3-8B-Instruct-Triplet
+  tokenizer_id: meta-llama/Meta-Llama-3-8B-Instruct
+  short_name: Llama
+  developer_name: samuelsimko
+  compile: False
+  dtype: bfloat16
+  chat_template: llama-3-instruct
+  trust_remote_code: True
 LLM-LAT/robust-llama3-8b-instruct:
   id: LLM-LAT/robust-llama3-8b-instruct
   tokenizer_id: LLM-LAT/robust-llama3-8b-instruct
@@ -155,6 +164,15 @@ qwen/Qwen2-7B-Instruct:
   id: qwen/Qwen2-7B-Instruct
   tokenizer_id: qwen/Qwen2-7B-Instruct
   short_name: Qwen2
+  developer_name: Alibaba
+  compile: False
+  dtype: bfloat16
+  chat_template: null
+  trust_remote_code: True
+Qwen/Qwen3-8B:
+  id: Qwen/Qwen3-8B
+  tokenizer_id: Qwen/Qwen3-8B
+  short_name: Qwen3
   developer_name: Alibaba
   compile: False
   dtype: bfloat16

@@ -1,0 +1,77 @@
+{
+  "meta": {
+    "experiment_name": "velocity_dual_family",
+    "output_root": "runs/experiments"
+  },
+  "runtime": {
+    "python_bin": "/workspace/AdversariaLLM/venv/bin/python",
+    "venv_activate": "/workspace/AdversariaLLM/venv/bin/activate"
+  },
+  "cluster": {
+    "partition": "tamper_resistance",
+    "account": "replace_me",
+    "gres": "gpu:1",
+    "num_gpus": 1,
+    "time_train": "08:00:00"
+  },
+  "models": {
+    "llama3_8b": {
+      "from_registry": "meta-llama/Meta-Llama-3-8B-Instruct"
+    },
+    "qwen3_8b": {
+      "from_registry": "Qwen/Qwen3-8B"
+    }
+  },
+  "defenses": {
+    "velocity_llama3": {
+      "script": "defenses/velocity_collapse_cb.py",
+      "base_model": "llama3_8b",
+      "output_subdir": "velocity_llama3",
+      "data": {
+        "cb_path": "data/circuit_breakers_train.json"
+      },
+      "train_args": {
+        "num_max_steps": 1500,
+        "batch_size": 8,
+        "max_length": 256,
+        "learning_rate": 0.0002,
+        "rep_layers": "15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30",
+        "w_vel_harm": 5.0,
+        "w_vel_benign": 1.0,
+        "w_kl": 1.0
+      }
+    },
+    "velocity_qwen3": {
+      "script": "defenses/velocity_collapse_cb.py",
+      "base_model": "qwen3_8b",
+      "output_subdir": "velocity_qwen3",
+      "data": {
+        "cb_path": "data/circuit_breakers_train.json"
+      },
+      "train_args": {
+        "num_max_steps": 1500,
+        "batch_size": 8,
+        "max_length": 256,
+        "learning_rate": 0.0002,
+        "rep_layers": "15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30",
+        "w_vel_harm": 5.0,
+        "w_vel_benign": 1.0,
+        "w_kl": 1.0
+      }
+    }
+  },
+  "pipelines": {
+    "velocity_llama3": [
+      {
+        "stage": "train",
+        "defense": "velocity_llama3"
+      }
+    ],
+    "velocity_qwen3": [
+      {
+        "stage": "train",
+        "defense": "velocity_qwen3"
+      }
+    ]
+  }
+}

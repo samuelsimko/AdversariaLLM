@@ -44,7 +44,10 @@ from .text_generation import (
     CommonGenerateArgs,
     APIRetryOverrides,
     LocalRetryOverrides,
-    RetryOverrides
+    RetryOverrides,
+    APIRetryPolicy,
+    LocalRetryPolicy,
+    RetryPolicy,
 )
 
 # Filter system

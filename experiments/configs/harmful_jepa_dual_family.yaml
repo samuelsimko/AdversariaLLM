@@ -1,0 +1,145 @@
+meta:
+  experiment_name: harmful_jepa_dual_family
+  output_root: runs/experiments
+
+runtime:
+  python_bin: /workspace/AdversariaLLM/venv/bin/python
+  venv_activate: /workspace/AdversariaLLM/venv/bin/activate
+
+cluster:
+  partition: tamper_resistance
+  account: replace_me
+  gres: gpu:1
+  num_gpus: 1
+  time_train: "08:00:00"
+  time_attack: "06:00:00"
+  time_benign: "02:00:00"
+
+default_attack_dataset: adv_behaviors_harmful_jepa_subset
+
+classifiers:
+  - local:strongreject
+  - local:harmbench
+
+models:
+  llama3_8b:
+    from_registry: meta-llama/Meta-Llama-3-8B-Instruct
+  qwen3_8b:
+    from_registry: Qwen/Qwen3-8B
+
+datasets:
+  adv_behaviors_harmful_jepa_subset:
+    name: adv_behaviors
+    seed: 0
+    idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    shuffle: true
+  jbb_harmful_jepa_inpainting_subset:
+    name: jbb_behaviors
+    seed: 0
+    idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    shuffle: true
+
+defenses:
+  harmful_jepa_llama3:
+    script: defenses/harmful_jepa_cb.py
+    base_model: llama3_8b
+    output_subdir: harmful_jepa_llama3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      num_max_steps: 1500
+      batch_size: 8
+      ultrachat_samples: 5000
+      limit_cb: 5000
+      max_length: 256
+      learning_rate: 0.0002
+      rep_layers: "15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30"
+      w_harm_jepa: 10.0
+      w_kl: 1.0
+      predictor_type: identity
+  harmful_jepa_qwen3:
+    script: defenses/harmful_jepa_cb.py
+    base_model: qwen3_8b
+    output_subdir: harmful_jepa_qwen3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      num_max_steps: 1500
+      batch_size: 8
+      ultrachat_samples: 5000
+      limit_cb: 5000
+      max_length: 256
+      learning_rate: 0.0002
+      rep_layers: "15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30"
+      w_harm_jepa: 10.0
+      w_kl: 1.0
+      predictor_type: identity
+
+attacks:
+  direct_harmful_jepa:
+    attack: direct
+    dataset: adv_behaviors_harmful_jepa_subset
+  prefilling_harmful_jepa:
+    attack: prefilling
+    dataset: adv_behaviors_harmful_jepa_subset
+    attack_overrides:
+      batch_size: 64
+  bon_harmful_jepa:
+    attack: bon
+    dataset: adv_behaviors_harmful_jepa_subset
+    attack_overrides:
+      num_steps: 200
+      sigma: 0.4
+  gcg_harmful_jepa_fast:
+    attack: gcg
+    dataset: adv_behaviors_harmful_jepa_subset
+    attack_overrides:
+      num_steps: 40
+      search_width: 64
+      batch_size: 32
+      topk: 64
+  soft_prompt_harmful_jepa:
+    attack: soft_prompt
+    dataset: adv_behaviors_harmful_jepa_subset
+  inpainting_harmful_jepa:
+    attack: inpainting
+    dataset: jbb_harmful_jepa_inpainting_subset
+    attack_overrides:
+      num_samples_per_behavior: 64
+
+benign_evals:
+  gsm8k_mmlu_smoke:
+    tasks: gsm8k,mmlu
+    limit: 200
+
+pipelines:
+  harmful_jepa_llama3:
+    - stage: train
+      defense: harmful_jepa_llama3
+    - stage: attack
+      defense: harmful_jepa_llama3
+      attacks:
+        - direct_harmful_jepa
+        - prefilling_harmful_jepa
+        - bon_harmful_jepa
+        - gcg_harmful_jepa_fast
+        - soft_prompt_harmful_jepa
+        - inpainting_harmful_jepa
+    - stage: benign_eval
+      defense: harmful_jepa_llama3
+      benign_eval: gsm8k_mmlu_smoke
+  harmful_jepa_qwen3:
+    - stage: train
+      defense: harmful_jepa_qwen3
+    - stage: attack
+      defense: harmful_jepa_qwen3
+      attacks:
+        - direct_harmful_jepa
+        - prefilling_harmful_jepa
+        - bon_harmful_jepa
+        - gcg_harmful_jepa_fast
+        - soft_prompt_harmful_jepa
+        - inpainting_harmful_jepa
+    - stage: benign_eval
+      defense: harmful_jepa_qwen3
+      benign_eval: gsm8k_mmlu_smoke

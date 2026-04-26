@@ -1,0 +1,157 @@
+meta:
+  experiment_name: ce_floor_jepa_qwen3_ablation
+  output_root: runs/experiments
+
+runtime:
+  python_bin: /workspace/AdversariaLLM/venv/bin/python
+  venv_activate: /workspace/AdversariaLLM/venv/bin/activate
+
+cluster:
+  partition: tamper_resistance
+  account: replace_me
+  gres: gpu:1
+  num_gpus: 1
+  time_train: "16:00:00"
+  time_attack: "06:00:00"
+  time_benign: "02:00:00"
+
+default_attack_dataset: adv_behaviors_ce_floor_subset
+
+classifiers:
+  - local:strongreject
+  - local:harmbench
+
+models:
+  qwen3_8b:
+    from_registry: Qwen/Qwen3-8B
+
+datasets:
+  adv_behaviors_ce_floor_subset:
+    name: adv_behaviors
+    seed: 0
+    idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    shuffle: true
+  jbb_ce_floor_inpainting_subset:
+    name: jbb_behaviors
+    seed: 0
+    idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    shuffle: true
+
+defenses:
+  ce_floor_base_qwen3:
+    script: defenses/ce_floor_base.py
+    base_model: qwen3_8b
+    output_subdir: ce_floor_base_qwen3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      num_max_steps: 400
+      batch_size: 8
+      grad_accum: 2
+      ultrachat_samples: 20000
+      limit_cb: 20000
+      max_length: 256
+      lr: 0.0002
+      harm_ce_min: 4.0
+      w_benign: 1.0
+      w_harm: 1.0
+      w_kl: 0.1
+      save_total_limit: 2
+      logging_steps: 10
+      save_steps: 200
+      lora_r: 32
+      lora_alpha: 16
+      lora_dropout: 0.05
+      target_modules: q_proj,v_proj
+
+  ce_floor_align_jepa_augmented_qwen3:
+    script: defenses/ce_floor_align_jepa.py
+    base_model: qwen3_8b
+    output_subdir: ce_floor_align_jepa_augmented_qwen3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      reverse_path: reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl
+      align_mode: original_plus_augmented
+      num_max_steps: 400
+      batch_size: 8
+      grad_accum: 2
+      ultrachat_samples: 20000
+      limit_cb: 20000
+      align_limit: 20000
+      max_length: 256
+      lr: 0.0002
+      harm_ce_min: 4.0
+      w_benign: 1.0
+      w_harm: 1.0
+      w_kl: 0.1
+      w_align: 0.5
+      num_pred_tokens: 1
+      align_layer: -1
+      align_metric: cosine
+      save_total_limit: 2
+      logging_steps: 10
+      save_steps: 200
+      lora_r: 32
+      lora_alpha: 16
+      lora_dropout: 0.05
+      target_modules: q_proj,v_proj
+
+attacks:
+  direct_ce_floor:
+    attack: direct
+  prefilling_ce_floor:
+    attack: prefilling
+    dataset: adv_behaviors_ce_floor_subset
+    attack_overrides:
+      batch_size: 64
+  bon_ce_floor:
+    attack: bon
+    dataset: adv_behaviors_ce_floor_subset
+    attack_overrides:
+      num_steps: 200
+      sigma: 0.4
+  soft_prompt_ce_floor:
+    attack: soft_prompt
+    dataset: adv_behaviors_ce_floor_subset
+  inpainting_ce_floor:
+    attack: inpainting
+    dataset: jbb_ce_floor_inpainting_subset
+    attack_overrides:
+      num_samples_per_behavior: 64
+
+benign_evals:
+  gsm8k_mmlu_smoke:
+    tasks: gsm8k,mmlu
+    limit: 200
+
+pipelines:
+  ce_floor_base_qwen3:
+    - stage: train
+      defense: ce_floor_base_qwen3
+    - stage: attack
+      defense: ce_floor_base_qwen3
+      attacks:
+        - direct_ce_floor
+        - prefilling_ce_floor
+        - bon_ce_floor
+        - soft_prompt_ce_floor
+        - inpainting_ce_floor
+    - stage: benign_eval
+      defense: ce_floor_base_qwen3
+      benign_eval: gsm8k_mmlu_smoke
+
+  ce_floor_align_jepa_augmented_qwen3:
+    - stage: train
+      defense: ce_floor_align_jepa_augmented_qwen3
+    - stage: attack
+      defense: ce_floor_align_jepa_augmented_qwen3
+      attacks:
+        - direct_ce_floor
+        - prefilling_ce_floor
+        - bon_ce_floor
+        - soft_prompt_ce_floor
+        - inpainting_ce_floor
+    - stage: benign_eval
+      defense: ce_floor_align_jepa_augmented_qwen3
+      benign_eval: gsm8k_mmlu_smoke

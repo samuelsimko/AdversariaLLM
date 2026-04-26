@@ -1,0 +1,126 @@
+{
+  "meta": {
+    "experiment_name": "velocity_dual_family",
+    "output_root": "runs/experiments"
+  },
+  "runtime": {
+    "python_bin": "/workspace/AdversariaLLM/venv/bin/python",
+    "venv_activate": "/workspace/AdversariaLLM/venv/bin/activate"
+  },
+  "cluster": {
+    "partition": "tamper_resistance",
+    "account": "replace_me",
+    "gres": "gpu:1",
+    "num_gpus": 1,
+    "time_attack": "04:00:00"
+  },
+  "default_attack_dataset": "adv_behaviors_velocity_subset",
+  "classifiers": [],
+  "models": {
+    "llama3_8b": {
+      "from_registry": "meta-llama/Meta-Llama-3-8B-Instruct"
+    },
+    "qwen3_8b": {
+      "from_registry": "Qwen/Qwen3-8B"
+    }
+  },
+  "datasets": {
+    "adv_behaviors_velocity_subset": {
+      "name": "adv_behaviors",
+      "seed": 0,
+      "idx": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "shuffle": true
+    }
+  },
+  "defenses": {
+    "velocity_llama3": {
+      "script": "defenses/velocity_collapse_cb.py",
+      "base_model": "llama3_8b",
+      "output_subdir": "velocity_llama3",
+      "data": {
+        "cb_path": "data/circuit_breakers_train.json"
+      },
+      "train_args": {
+        "num_max_steps": 200,
+        "batch_size": 2,
+        "ultrachat_samples": 2048,
+        "limit_cb": 2048,
+        "max_length": 256,
+        "learning_rate": 0.0002,
+        "rep_layers": "15,20,25",
+        "w_vel_harm": 2.0,
+        "w_vel_benign": 1.0,
+        "w_kl": 1.0
+      }
+    },
+    "velocity_qwen3": {
+      "script": "defenses/velocity_collapse_cb.py",
+      "base_model": "qwen3_8b",
+      "output_subdir": "velocity_qwen3",
+      "data": {
+        "cb_path": "data/circuit_breakers_train.json"
+      },
+      "train_args": {
+        "num_max_steps": 200,
+        "batch_size": 2,
+        "ultrachat_samples": 2048,
+        "limit_cb": 2048,
+        "max_length": 256,
+        "learning_rate": 0.0002,
+        "rep_layers": "15,20,25",
+        "w_vel_harm": 2.0,
+        "w_vel_benign": 1.0,
+        "w_kl": 1.0
+      }
+    }
+  },
+  "attacks": {
+    "direct_velocity": {
+      "attack": "direct",
+      "dataset": "adv_behaviors_velocity_subset"
+    },
+    "gcg_velocity_fast": {
+      "attack": "gcg",
+      "dataset": "adv_behaviors_velocity_subset",
+      "attack_overrides": {
+        "num_steps": 40,
+        "search_width": 64,
+        "batch_size": 32,
+        "topk": 64
+      }
+    }
+  },
+  "pipelines": {
+    "velocity_llama3": [
+      {
+        "stage": "attack",
+        "defense": "velocity_llama3",
+        "attacks": [
+          "direct_velocity",
+          "gcg_velocity_fast"
+        ]
+      }
+    ],
+    "velocity_qwen3": [
+      {
+        "stage": "attack",
+        "defense": "velocity_qwen3",
+        "attacks": [
+          "direct_velocity",
+          "gcg_velocity_fast"
+        ]
+      }
+    ]
+  }
+}

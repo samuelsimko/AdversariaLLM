@@ -10,7 +10,12 @@ from typing import Any, Literal, overload
 
 import torch
 import torch.nn.functional as F
-from transformers import DynamicCache, HybridCache, PreTrainedModel, PreTrainedTokenizerBase
+from transformers import DynamicCache, PreTrainedModel, PreTrainedTokenizerBase
+
+try:
+    from transformers import HybridCache
+except ImportError:  # transformers<5.6 does not expose HybridCache
+    HybridCache = DynamicCache
 
 from .batching import with_max_batchsize
 from .filters import FILTER_REGISTRY, FilterPipeline, NullFilter, validate_json_strings

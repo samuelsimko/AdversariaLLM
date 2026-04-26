@@ -1,0 +1,17 @@
+[
+  {
+    "training_data": {
+      "circuit_breakers": "data/circuit_breakers_train.json"
+    },
+    "hyperparams": {
+      "lr": 0.001,
+      "num_steps": 300,
+      "num_tokens": 2,
+      "optim_str_init": "x x",
+      "rand_init": false,
+      "w_circuit_breakers": 1.0,
+      "w_honeypots": null,
+      "log_every": 5
+    }
+  }
+]

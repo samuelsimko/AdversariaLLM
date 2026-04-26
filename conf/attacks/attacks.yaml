@@ -391,3 +391,17 @@ random_search:
   candidates_per_generation: 8
   optim_str_init: "x x x x x x x x x x x x x x x x x x x x" # all tested tokenizers convert this to exactly 20 tokens
   generation_config: ${attacks._default.generation_config}
+soft_prompt:
+  name: soft_prompt
+  type: embedding
+  version: 0.0.1
+  generation_config: ${attacks._default.generation_config}
+  seed: ${attacks._default.seed}
+  num_steps: 200
+  optim_str_init: "x x x x x"
+  rand_init: false
+  num_tokens: 5
+  lr: 0.01
+  early_stop_loss: 0.001
+  add_space_before_target: false
+  verbose: false

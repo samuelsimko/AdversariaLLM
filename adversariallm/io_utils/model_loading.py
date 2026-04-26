@@ -10,9 +10,14 @@ import logging
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 import torch
 from omegaconf import DictConfig
+try:
+    from peft import PeftModel
+except ImportError:  # pragma: no cover - optional dependency at runtime
+    PeftModel = None
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -23,6 +28,62 @@ from transformers import (
 from transformers.utils.logging import disable_progress_bar
 
 disable_progress_bar()  # disable progress bar for model loading
+
+
+_NATIVE_QUANTIZED_MODEL_PREFIXES = ("openai/gpt-oss",)
+_DTYPE_ALIASES = {
+    "bf16": "bfloat16",
+    "fp16": "float16",
+    "fp32": "float32",
+}
+
+
+def _normalize_dtype_name(dtype: str | None) -> str | None:
+    if dtype is None:
+        return None
+    return _DTYPE_ALIASES.get(dtype, dtype)
+
+
+def uses_native_quantized_checkpoint(model_id: str) -> bool:
+    normalized_model_id = model_id.lower()
+    return any(prefix in normalized_model_id for prefix in _NATIVE_QUANTIZED_MODEL_PREFIXES)
+
+
+def build_causallm_load_kwargs(
+    model_id: str,
+    *,
+    dtype: str | None,
+    trust_remote_code: bool,
+) -> dict[str, Any]:
+    normalized_dtype = _normalize_dtype_name(dtype)
+    model_kwargs: dict[str, Any] = {
+        "trust_remote_code": trust_remote_code,
+        "low_cpu_mem_usage": True,
+        "device_map": "auto",
+    }
+    if normalized_dtype is None:
+        return model_kwargs
+
+    if "float" not in normalized_dtype:
+        if uses_native_quantized_checkpoint(model_id):
+            return model_kwargs
+        if normalized_dtype == "int4":
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+            )
+            return model_kwargs
+        if normalized_dtype == "int8":
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+            return model_kwargs
+        raise ValueError(f"Unknown dtype {dtype}")
+
+    model_kwargs["dtype"] = getattr(torch, normalized_dtype)
+    if "gemma-3" in model_id.lower():
+        model_kwargs["attn_implementation"] = "eager"
+    return model_kwargs
 
 
 def load_model_and_tokenizer(
@@ -50,52 +111,23 @@ def load_model_and_tokenizer(
 
     gc.collect()
     torch.cuda.empty_cache()
-    if model_params.dtype is None:
-        model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
+        model_params.id,
+        **build_causallm_load_kwargs(
             model_params.id,
+            dtype=model_params.dtype,
             trust_remote_code=model_params.trust_remote_code,
-            low_cpu_mem_usage=True,
-            device_map="auto",
-        ).eval()
-    elif "float" not in model_params.dtype:
-        if model_params.dtype == "int4":
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-            )
-        elif model_params.dtype == "int8":
-            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-        else:
-            raise ValueError(f"Unknown dtype {model_params.dtype}")
-
-        model = AutoModelForCausalLM.from_pretrained(
-            model_params.id,
-            trust_remote_code=model_params.trust_remote_code,
-            quantization_config=quantization_config,
-        ).eval()
-    else:
-        if "gemma-3" in model_params.id:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_params.id,
-                dtype=getattr(torch, model_params.dtype),
-                trust_remote_code=model_params.trust_remote_code,
-                low_cpu_mem_usage=True,
-                attn_implementation="eager",
-                device_map="auto",
-            ).eval()
-        else:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_params.id,
-                dtype=getattr(torch, model_params.dtype),
-                trust_remote_code=model_params.trust_remote_code,
-                low_cpu_mem_usage=True,
-                device_map="auto",
-            ).eval()
+        ),
+    ).eval()
     model: PreTrainedModel
     if model_params.compile:
         model = torch.compile(model)  # type: ignore
+
+    peft_path = getattr(model_params, "peft_path", None)
+    if peft_path:
+        if PeftModel is None:
+            raise ImportError("peft is required to load model adapters via `peft_path`.")
+        model = PeftModel.from_pretrained(model, peft_path).eval()
 
     model.config.short_name = model_params.short_name
     model.config.developer_name = model_params.developer_name

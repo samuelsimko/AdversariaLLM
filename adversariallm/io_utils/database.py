@@ -1,28 +1,205 @@
-"""
-Database operations and MongoDB integration.
+"""Storage helpers for attack result metadata.
 
-This module provides functions for connecting to MongoDB and performing
-database operations for attack result management and analysis.
+This module now defaults to SQLite for local, zero-config metadata storage while
+keeping the old MongoDB path available as an explicit opt-in backend.
 """
 
-import os
 import glob
+import json
+import os
+import sqlite3
 from functools import lru_cache
-from typing import Iterable
+from typing import Any, Iterable
 
 from omegaconf import OmegaConf
-from pymongo import MongoClient
-from pymongo.synchronous.database import Database
+
+try:
+    from pymongo import MongoClient
+    from pymongo.synchronous.database import Database as MongoDatabase
+except ImportError:  # pragma: no cover - optional at runtime
+    MongoClient = None
+    MongoDatabase = Any
 
 from .data_analysis import get_nested_value, normalize_value_for_grouping
 
 
-def get_mongodb_connection() -> Database:
-    """Get a MongoDB connection.
+DEFAULT_SQLITE_PATH = os.path.abspath(
+    os.environ.get("ADVERSARIAL_SQLITE_PATH", os.path.join("outputs", "runs.sqlite3"))
+)
 
-    Connects to MongoDB using connection details from a config file or environment
-    variables. Falls back to a default localhost connection if not specified.
+
+def get_storage_backend() -> str:
+    """Return the configured metadata backend.
+
+    SQLite is the default because it requires no external service. MongoDB
+    remains available via ``ADVERSARIAL_DB_BACKEND=mongodb``.
     """
+    return os.environ.get("ADVERSARIAL_DB_BACKEND", "sqlite").strip().lower()
+
+
+def get_sqlite_path() -> str:
+    """Return the path of the SQLite metadata database."""
+    return os.path.abspath(os.environ.get("ADVERSARIAL_SQLITE_PATH", DEFAULT_SQLITE_PATH))
+
+
+def _matches_filter(document: dict[str, Any], filter_query: dict[str, Any] | None) -> bool:
+    if not filter_query:
+        return True
+    for key, value in filter_query.items():
+        if key not in document or not check_match(document[key], value):
+            return False
+    return True
+
+
+class SQLiteRunsCollection:
+    """Minimal Mongo-like collection wrapper backed by SQLite."""
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        parent = os.path.dirname(self.db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    config_json TEXT NOT NULL,
+                    log_file TEXT NOT NULL,
+                    scored_by_json TEXT NOT NULL DEFAULT '[]'
+                )
+                """
+            )
+            conn.commit()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    @staticmethod
+    def _row_to_doc(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "_id": row["id"],
+            "config": json.loads(row["config_json"]),
+            "log_file": row["log_file"],
+            "scored_by": json.loads(row["scored_by_json"]),
+        }
+
+    @staticmethod
+    def _serialize_doc(doc: dict[str, Any]) -> tuple[str, str, str]:
+        return (
+            json.dumps(doc["config"], sort_keys=True),
+            doc["log_file"],
+            json.dumps(doc.get("scored_by", []), sort_keys=True),
+        )
+
+    def find(
+        self,
+        filter_query: dict[str, Any] | None = None,
+        projection: dict[str, int] | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id, config_json, log_file, scored_by_json FROM runs").fetchall()
+        documents = [self._row_to_doc(row) for row in rows]
+        matched = [doc for doc in documents if _matches_filter(doc, filter_query)]
+        if projection is None:
+            return matched
+
+        include_keys = {key for key, include in projection.items() if include}
+        projected = []
+        for doc in matched:
+            projected.append({key: value for key, value in doc.items() if key in include_keys})
+        return projected
+
+    def find_one(
+        self,
+        filter_query: dict[str, Any] | None = None,
+        projection: dict[str, int] | None = None,
+    ) -> dict[str, Any] | None:
+        matches = self.find(filter_query, projection)
+        return matches[0] if matches else None
+
+    def replace_one(self, filter_query: dict[str, Any], replacement: dict[str, Any], upsert: bool = False) -> None:
+        existing = self.find(filter_query)
+        serialized = self._serialize_doc(replacement)
+        with self._connect() as conn:
+            if existing:
+                conn.execute(
+                    "UPDATE runs SET config_json = ?, log_file = ?, scored_by_json = ? WHERE id = ?",
+                    (*serialized, existing[0]["_id"]),
+                )
+            elif upsert:
+                conn.execute(
+                    "INSERT INTO runs (config_json, log_file, scored_by_json) VALUES (?, ?, ?)",
+                    serialized,
+                )
+            conn.commit()
+
+    def delete_one(self, filter_query: dict[str, Any]) -> None:
+        existing = self.find(filter_query)
+        if not existing:
+            return
+        with self._connect() as conn:
+            conn.execute("DELETE FROM runs WHERE id = ?", (existing[0]["_id"],))
+            conn.commit()
+
+    def insert_many(self, documents: list[dict[str, Any]]) -> None:
+        serialized = [self._serialize_doc(doc) for doc in documents]
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT INTO runs (config_json, log_file, scored_by_json) VALUES (?, ?, ?)",
+                serialized,
+            )
+            conn.commit()
+
+    def update_many(self, filter_query: dict[str, Any], update_query: dict[str, Any]) -> None:
+        add_to_set = update_query.get("$addToSet", {})
+        if set(add_to_set) - {"scored_by"}:
+            raise NotImplementedError("SQLite backend currently supports $addToSet only for scored_by")
+
+        existing = self.find(filter_query)
+        if not existing:
+            return
+
+        with self._connect() as conn:
+            for doc in existing:
+                scored_by = list(doc.get("scored_by", []))
+                value = add_to_set.get("scored_by")
+                if value is not None and value not in scored_by:
+                    scored_by.append(value)
+                    conn.execute(
+                        "UPDATE runs SET scored_by_json = ? WHERE id = ?",
+                        (json.dumps(scored_by, sort_keys=True), doc["_id"]),
+                    )
+            conn.commit()
+
+
+class SQLiteDatabase:
+    """Container exposing a ``runs`` collection like the MongoDB client."""
+
+    def __init__(self, db_path: str):
+        self.runs = SQLiteRunsCollection(db_path)
+
+
+def get_mongodb_connection() -> SQLiteDatabase | MongoDatabase:
+    """Return the configured metadata connection.
+
+    The historic function name is retained for compatibility with the rest of
+    the codebase.
+    """
+    backend = get_storage_backend()
+    if backend == "sqlite":
+        return SQLiteDatabase(get_sqlite_path())
+    if backend != "mongodb":
+        raise ValueError(f"Unsupported ADVERSARIAL_DB_BACKEND={backend!r}. Expected 'sqlite' or 'mongodb'.")
+
+    if MongoClient is None:
+        raise ImportError("pymongo is required when ADVERSARIAL_DB_BACKEND=mongodb")
+
     user = os.environ.get("MONGODB_USER")
     password = os.environ.get("MONGODB_PASSWORD")
     host = os.environ.get("MONGODB_HOST")

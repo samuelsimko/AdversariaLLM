@@ -20,6 +20,12 @@ embed_dir: ${root_dir}/embeddings/  # place to store embeddings for emebdding at
 overwrite: false
 
 classifiers: ["strong_reject"]  # anything from judgezoo
+judge_selection:
+  enabled: false
+  prescore_classifier: "strong_reject"
+  score_field: "p_harmful"
+  top_k: 5
+  apply_to: null
 
 # Top-level generation config for easier overriding
 generation_config:
@@ -33,3 +39,6 @@ generation_config:
 attack: null
 dataset: adv_behaviors
 model: null
+attack_overrides: {}
+dataset_overrides: {}
+model_overrides: {}

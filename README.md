@@ -212,6 +212,24 @@ outputs/
 ### Visualization & Evaluation (WIP)
 Generate plots and analysis with `visualize_results.ipynb` in `evaluations/`
 
+### Metadata Storage
+
+Run metadata now defaults to a local SQLite database at `outputs/runs.sqlite3`, so no database server is required for standard usage.
+
+If you want to keep using MongoDB, set:
+
+```bash
+export ADVERSARIAL_DB_BACKEND=mongodb
+export MONGODB_URI=...
+export MONGODB_DB=...
+```
+
+To customize the SQLite file location, set:
+
+```bash
+export ADVERSARIAL_SQLITE_PATH=/absolute/path/to/runs.sqlite3
+```
+
 
 ## Used in
 [1] Beyer, Tim, et al. ["Fast Proxies for LLM Robustness Evaluation."](https://arxiv.org/abs/2502.10487) arXiv preprint arXiv:2502.10487 (2025).\

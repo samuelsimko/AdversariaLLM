@@ -19,18 +19,29 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch._dynamo.config.recompile_limit = 512  # needed for gemma 3 on AutoDAN
 
 
-def select_configs(cfg: DictConfig, name: str | ListConfig | None) -> list[tuple[str, DictConfig]]:
+def merge_config_overrides(base_cfg: DictConfig, overrides: DictConfig | dict | None) -> DictConfig:
+    base_copy = OmegaConf.create(OmegaConf.to_container(base_cfg, resolve=True))
+    if not overrides:
+        return base_copy
+    return OmegaConf.merge(base_copy, overrides)
+
+
+def select_configs(
+    cfg: DictConfig,
+    name: str | ListConfig | None,
+    overrides: DictConfig | dict | None = None,
+) -> list[tuple[str, DictConfig]]:
     if name is not None:
         if isinstance(name, ListConfig):
-            return [(n, cfg[n]) for n in name]
-        return [(name, cfg[name])]
-    return list(cfg.items())
+            return [(n, merge_config_overrides(cfg[n], overrides)) for n in name]
+        return [(name, merge_config_overrides(cfg[name], overrides))]
+    return [(n, merge_config_overrides(params, overrides)) for n, params in cfg.items() if not str(n).startswith("_")]
 
 
 def collect_configs(cfg: DictConfig) -> list[RunConfig]:
-    models_to_run = select_configs(cfg.models, cfg.model)
-    datasets_to_run = select_configs(cfg.datasets, cfg.dataset)
-    attacks_to_run = select_configs(cfg.attacks, cfg.attack)
+    models_to_run = select_configs(cfg.models, cfg.model, cfg.get("model_overrides"))
+    datasets_to_run = select_configs(cfg.datasets, cfg.dataset, cfg.get("dataset_overrides"))
+    attacks_to_run = select_configs(cfg.attacks, cfg.attack, cfg.get("attack_overrides"))
 
     all_run_configs = []
     for model, model_params in models_to_run:
@@ -92,6 +103,11 @@ def main(cfg: DictConfig) -> None:
     # Remove classifiers from config to avoid saving to mongodb
     # This way we don't re-run the attacks when only the classifiers change
     judges_to_run = cfg.pop('classifiers')
+    judge_selection = cfg.pop('judge_selection', None)
+    if judge_selection and judge_selection.get("enabled", False) and judges_to_run is not None:
+        prescore_classifier = judge_selection.get("prescore_classifier")
+        if prescore_classifier in judges_to_run:
+            judges_to_run = [prescore_classifier] + [j for j in judges_to_run if j != prescore_classifier]
     OmegaConf.set_struct(cfg, True)
     all_run_configs = collect_configs(cfg)
 
@@ -107,6 +123,17 @@ def main(cfg: DictConfig) -> None:
             "suffixes": [date_time_string.split('/')[-1]],  # Use the timestamp from this run to make sure we only judge this run
             "filter_by": None
         })
+        if judge_selection and judge_selection.get("enabled", False):
+            apply_to = judge_selection.get("apply_to")
+            applies_to_this_judge = apply_to is None or judge in apply_to
+            if applies_to_this_judge and judge != judge_selection.get("prescore_classifier"):
+                judge_cfg.selection = OmegaConf.create(
+                    {
+                        "prescore_classifier": judge_selection.get("prescore_classifier"),
+                        "score_field": judge_selection.get("score_field"),
+                        "top_k": judge_selection.get("top_k"),
+                    }
+                )
         free_vram()
         # Run the judge
         run_judges(judge_cfg)

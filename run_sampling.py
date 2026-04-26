@@ -25,13 +25,11 @@ import os
 from datetime import datetime
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  # determinism
-import copy
 import logging
 import sys
 
 import hydra
 import torch
-from judgezoo import Judge
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 from vllm import LLM, SamplingParams, TokensPrompt
@@ -46,6 +44,14 @@ from adversariallm.io_utils import (
     get_filtered_and_grouped_paths,
     get_mongodb_connection,
     load_model_and_tokenizer,
+)
+from adversariallm.judging import (
+    build_judge,
+    build_judgezoo_dual_results,
+    build_with_jailbreak_conversation,
+    build_without_jailbreak_conversation,
+    extract_last_user_message,
+    parse_judge_spec,
 )
 from adversariallm.lm_utils import generate_ragged_batched
 
@@ -188,20 +194,40 @@ def main(cfg: DictConfig) -> None:
                         last_judge = classifier
                         del judge
                         free_vram()
-                        judge = Judge.from_name(classifier)
-                        print(judge.classifier.device)
-                    modified_prompts = []
-                    for completions in new_completions:
+                        judge = build_judge(classifier)
+                        if hasattr(judge, "classifier") and hasattr(judge.classifier, "device"):
+                            print(judge.classifier.device)
+                    without_jailbreak_prompts = []
+                    with_jailbreak_prompts = []
+                    harmful_prompts = []
+                    attack_prompts = []
+                    responses = []
+                    harmful_prompt = extract_last_user_message(prompt)
+                    for step, completions in zip(subrun["steps"], new_completions):
+                        attack_prompt = extract_last_user_message(step["model_input"])
                         for completion in completions:
-                            modified_prompt = copy.deepcopy(prompt)
-                            if modified_prompt[-1]["role"] == "assistant":
-                                modified_prompt[-1]["content"] += completion
-                            else:
-                                modified_prompt.append({"role": "assistant", "content": completion})
-                            modified_prompts.append(modified_prompt)
+                            without_jailbreak_prompts.append(
+                                build_without_jailbreak_conversation(
+                                    prompt, step["model_input"], completion
+                                )
+                            )
+                            with_jailbreak_prompts.append(
+                                build_with_jailbreak_conversation(
+                                    step["model_input"], completion
+                                )
+                            )
+                            harmful_prompts.append(harmful_prompt)
+                            attack_prompts.append(attack_prompt)
+                            responses.append(completion)
 
-                    results = judge(modified_prompts, verbose=True)
-                    if all(r is None for r in results):
+                    backend, _ = parse_judge_spec(classifier)
+                    if backend == "judgezoo":
+                        without_results = judge(without_jailbreak_prompts, verbose=True)
+                        with_results = judge(with_jailbreak_prompts, verbose=True)
+                        results = build_judgezoo_dual_results(without_results, with_results)
+                    else:
+                        results = judge(harmful_prompts, attack_prompts, responses, verbose=True)
+                    if all(v is None for v in results.values()):
                         continue
                     i = 0
                     for step in subrun["steps"]:
@@ -245,7 +271,7 @@ def main(cfg: DictConfig) -> None:
             new_entries = []
             for entry in matching_entries:
                 new_entry = entry.copy()
-                # Remove the _id field so MongoDB will generate a new one
+                # Remove the backend-specific primary key before cloning the entry.
                 if "_id" in new_entry:
                     del new_entry["_id"]
                 # Update the log_file to the new path

@@ -3,7 +3,7 @@ IO Utils - Modular I/O and data management utilities
 
 This package provides utilities for:
 - Model and tokenizer loading
-- Database operations and MongoDB integration
+- Database operations and metadata storage
 - Attack result logging and management
 - JSON encoding/decoding and file operations
 - Data analysis and result collection

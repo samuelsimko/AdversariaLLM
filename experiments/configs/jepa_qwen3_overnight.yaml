@@ -1,0 +1,169 @@
+meta:
+  experiment_name: jepa_qwen3_overnight
+  output_root: runs/experiments
+
+runtime:
+  python_bin: /workspace/AdversariaLLM/venv/bin/python
+  venv_activate: /workspace/AdversariaLLM/venv/bin/activate
+
+cluster:
+  partition: tamper_resistance
+  account: replace_me
+  gres: gpu:1
+  num_gpus: 1
+  time_train: "12:00:00"
+  time_attack: "06:00:00"
+  time_benign: "04:00:00"
+
+models:
+  qwen3_8b:
+    from_registry: Qwen/Qwen3-8B
+
+defenses:
+  jepa_ce_no_jepa_qwen3:
+    script: defenses/jepa_ce.py
+    base_model: qwen3_8b
+    output_subdir: jepa_ce_no_jepa_qwen3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      pair_path: reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl
+      pair_format: reverse
+      extra_pair_dataset: allenai/wildjailbreak
+      extra_pair_dataset_config: train
+      extra_pair_split: train
+      extra_pair_format: wildjailbreak
+      extra_pair_limit: 200000
+      num_max_steps: 1500
+      batch_size: 8
+      grad_accum: 2
+      ultrachat_samples: 20000
+      limit_cb: 20000
+      pair_limit: 1000000
+      pair_sample_size: 48000
+      pair_sample_balanced: true
+      include_pair_harmful_in_harm_ce: true
+      max_length: 256
+      lr: 0.0002
+      harm_ce_min: 5.0
+      w_benign: 1.0
+      w_harm: 1.0
+      w_kl: 0.1
+      w_jepa: 0.0
+      align_layer: 25
+      predictor_type: mlp
+      predictor_layers: 2
+      predictor_bottleneck_dim: 64
+      predictor_dropout: 0.0
+      report_to: wandb
+      run_name: jepa_ce_no_jepa_qwen3_1500
+      save_total_limit: 2
+      logging_steps: 10
+      save_steps: 500
+      lora_r: 32
+      lora_alpha: 16
+      lora_dropout: 0.05
+      target_modules: q_proj,v_proj
+
+  jepa_ce_bottleneck64_qwen3:
+    script: defenses/jepa_ce.py
+    base_model: qwen3_8b
+    output_subdir: jepa_ce_bottleneck64_qwen3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      pair_path: reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl
+      pair_format: reverse
+      extra_pair_dataset: allenai/wildjailbreak
+      extra_pair_dataset_config: train
+      extra_pair_split: train
+      extra_pair_format: wildjailbreak
+      extra_pair_limit: 200000
+      num_max_steps: 1500
+      batch_size: 8
+      grad_accum: 2
+      ultrachat_samples: 20000
+      limit_cb: 20000
+      pair_limit: 1000000
+      pair_sample_size: 48000
+      pair_sample_balanced: true
+      include_pair_harmful_in_harm_ce: true
+      max_length: 256
+      lr: 0.0002
+      harm_ce_min: 5.0
+      w_benign: 1.0
+      w_harm: 1.0
+      w_kl: 0.1
+      w_jepa: 0.5
+      align_layer: 25
+      predictor_type: mlp
+      predictor_layers: 2
+      predictor_bottleneck_dim: 64
+      predictor_dropout: 0.0
+      report_to: wandb
+      run_name: jepa_ce_bottleneck64_qwen3_1500
+      save_total_limit: 2
+      logging_steps: 10
+      save_steps: 500
+      lora_r: 32
+      lora_alpha: 16
+      lora_dropout: 0.05
+      target_modules: q_proj,v_proj
+
+  jepa_ce_bottleneck256_qwen3:
+    script: defenses/jepa_ce.py
+    base_model: qwen3_8b
+    output_subdir: jepa_ce_bottleneck256_qwen3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      pair_path: reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl
+      pair_format: reverse
+      extra_pair_dataset: allenai/wildjailbreak
+      extra_pair_dataset_config: train
+      extra_pair_split: train
+      extra_pair_format: wildjailbreak
+      extra_pair_limit: 200000
+      num_max_steps: 1500
+      batch_size: 8
+      grad_accum: 2
+      ultrachat_samples: 20000
+      limit_cb: 20000
+      pair_limit: 1000000
+      pair_sample_size: 48000
+      pair_sample_balanced: true
+      include_pair_harmful_in_harm_ce: true
+      max_length: 256
+      lr: 0.0002
+      harm_ce_min: 5.0
+      w_benign: 1.0
+      w_harm: 1.0
+      w_kl: 0.1
+      w_jepa: 1.0
+      align_layer: 25
+      predictor_type: mlp
+      predictor_layers: 2
+      predictor_bottleneck_dim: 256
+      predictor_dropout: 0.0
+      report_to: wandb
+      run_name: jepa_ce_bottleneck256_qwen3_1500_w1
+      save_total_limit: 2
+      logging_steps: 10
+      save_steps: 500
+      lora_r: 32
+      lora_alpha: 16
+      lora_dropout: 0.05
+      target_modules: q_proj,v_proj
+
+pipelines:
+  jepa_ce_no_jepa_qwen3:
+    - stage: train
+      defense: jepa_ce_no_jepa_qwen3
+
+  jepa_ce_bottleneck64_qwen3:
+    - stage: train
+      defense: jepa_ce_bottleneck64_qwen3
+
+  jepa_ce_bottleneck256_qwen3:
+    - stage: train
+      defense: jepa_ce_bottleneck256_qwen3

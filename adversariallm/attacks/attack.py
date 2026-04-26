@@ -163,6 +163,10 @@ class Attack(Generic[AttRes]):
                 from .random_search import RandomSearchAttack
 
                 return RandomSearchAttack
+            case "soft_prompt":
+                from .soft_prompt import SoftPromptAttack
+
+                return SoftPromptAttack
             case _:
                 raise ValueError(f"Unknown attack: {name}")
 
