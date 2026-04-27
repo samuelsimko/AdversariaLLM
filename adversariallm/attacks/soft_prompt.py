@@ -1,5 +1,6 @@
 import copy
 import logging
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
@@ -31,6 +32,24 @@ class SoftPromptConfig:
     verbose: bool = False
     extra_fields: dict[str, Any] = field(default_factory=dict)
 
+    # Per-prompt hyperparameter randomization. When randomize_per_prompt=True,
+    # for each prompt index `i` in the attacked dataset we deterministically
+    # draw (num_tokens, num_steps, lr) using a Random seeded by
+    # randomize_seed + i, overriding the static fields above. The same prompt
+    # index across DIFFERENT models gets the SAME hyperparams (so we can
+    # compare cell-vs-cell at matched attack difficulty), while different
+    # indices get different ones (so we sweep the attack hyperparam space).
+    randomize_per_prompt: bool = False
+    randomize_seed: int = 2024
+    randomize_force_rand_init: bool = True   # ignore optim_str_init when randomizing
+    num_tokens_min: int = 1
+    num_tokens_max: int = 10
+    num_steps_min: int = 100
+    num_steps_max: int = 700
+    # Log-uniform draw for lr. Defaults span 1e-4 .. 1e-1 (3 orders of magnitude).
+    lr_log10_min: float = -4.0
+    lr_log10_max: float = -1.0
+
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "SoftPromptConfig":
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
@@ -40,6 +59,22 @@ class SoftPromptConfig:
             init_data["optim_str_init"] = "x " * int(extra["str_length"])
         init_data["extra_fields"] = data
         return cls(**init_data)
+
+
+def derive_randomized_soft_prompt_params(
+    base_config: SoftPromptConfig,
+    prompt_index: int,
+) -> dict[str, Any]:
+    """Deterministically draw per-prompt soft-prompt hyperparameters.
+
+    Same prompt_index always produces the same draw (across models / runs)
+    because the RNG is seeded by ``randomize_seed + prompt_index`` only.
+    """
+    rng = random.Random(int(base_config.randomize_seed) + int(prompt_index))
+    num_tokens = rng.randint(base_config.num_tokens_min, base_config.num_tokens_max)
+    num_steps = rng.randint(base_config.num_steps_min, base_config.num_steps_max)
+    lr = 10.0 ** rng.uniform(base_config.lr_log10_min, base_config.lr_log10_max)
+    return {"num_tokens": num_tokens, "num_steps": num_steps, "lr": lr}
 
 
 @dataclass
@@ -188,6 +223,22 @@ class SoftPromptAttack(Attack):
         texts = [tokenizer.decode(ids, skip_special_tokens=True).strip() for ids in gen_ids]
         return gen_ids, texts
 
+    def _resolve_prompt_indices(self, dataset: PromptDataset) -> list[int]:
+        """Return the per-iteration prompt index used for randomization seeding.
+
+        Prefers the dataset's own ``config_idx`` (the dataset-level behavior IDs
+        from the YAML, e.g. ``[0, 1, ..., 49]``) so that the same behavior gets
+        the same hyperparams across runs that re-slice the dataset. Falls back
+        to a 0..N-1 enumeration when the dataset doesn't expose config_idx.
+        """
+        n = len(dataset)
+        cfg_idx = getattr(dataset, "config_idx", None)
+        if isinstance(cfg_idx, (list, tuple)) and len(cfg_idx) == n:
+            return [int(x) for x in cfg_idx]
+        if isinstance(cfg_idx, int) and n == 1:
+            return [int(cfg_idx)]
+        return list(range(n))
+
     def run(
         self,
         model: transformers.PreTrainedModel,
@@ -199,8 +250,9 @@ class SoftPromptAttack(Attack):
 
         runs: list[SingleAttackRunResult] = []
         device = model.device
+        prompt_indices = self._resolve_prompt_indices(dataset)
 
-        for conversation in dataset:
+        for iter_index, conversation in enumerate(dataset):
             t0 = time.time()
             if not conversation or conversation[-1]["role"] != "assistant":
                 raise ValueError("SoftPromptAttack expects each example to end with an assistant target turn.")
@@ -208,13 +260,40 @@ class SoftPromptAttack(Attack):
             prompt_messages = copy.deepcopy(conversation[:-1])
             target = conversation[-1]["content"]
 
+            # Per-prompt hyperparameter randomization: keep self.config immutable,
+            # build a per-iteration override.
+            iter_config = self.config
+            randomized_meta: dict[str, Any] = {}
+            if self.config.randomize_per_prompt:
+                prompt_index = prompt_indices[iter_index]
+                draw = derive_randomized_soft_prompt_params(self.config, prompt_index)
+                iter_config = copy.copy(self.config)
+                iter_config.num_tokens = draw["num_tokens"]
+                iter_config.num_steps = draw["num_steps"]
+                iter_config.lr = float(draw["lr"])
+                if self.config.randomize_force_rand_init:
+                    iter_config.rand_init = True
+                randomized_meta = {
+                    "_randomized_prompt_index": prompt_index,
+                    "_randomized_num_tokens": iter_config.num_tokens,
+                    "_randomized_num_steps": iter_config.num_steps,
+                    "_randomized_lr": iter_config.lr,
+                }
+                logging.info(
+                    "[soft_prompt] prompt_index=%d num_tokens=%d num_steps=%d lr=%.5g",
+                    prompt_index,
+                    iter_config.num_tokens,
+                    iter_config.num_steps,
+                    iter_config.lr,
+                )
+
             try:
                 res = run_soft_opt(
                     model=model,
                     tokenizer=tokenizer,
                     messages=prompt_messages,
                     target=target,
-                    config=self.config,
+                    config=iter_config,
                     device=device,
                 )
                 _, generated = self._generate_from_embeds(model, tokenizer, res.input_embeds)

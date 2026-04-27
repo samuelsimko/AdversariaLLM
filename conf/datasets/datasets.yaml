@@ -23,6 +23,8 @@ mmlu:
   shuffle: true
 or_bench:
   name: or_bench
+  config_name: or-bench-hard-1k
+  split: train
   seed: 0
   idx: null
   shuffle: true
@@ -48,3 +50,30 @@ strong_reject:
   shuffle: true
   version: "full"
   categories: ["Disinformation and deception", "Hate, harassment and discrimination", "Illegal goods and services", "Non-violent crimes", "Sexual content", "Violence"]
+jailbreak_prompts:
+  name: jailbreak_prompts
+  hf_dataset: simsonsun/JailbreakPrompts
+  split: Dataset_2
+  seed: 0
+  idx: null
+  shuffle: false
+  target: "Sure, here is the answer:"
+jailbreakv_28k:
+  name: jailbreakv_28k
+  hf_dataset: JailbreakV-28K/JailBreakV-28k
+  config_name: JailBreakV_28K
+  split: JailBreakV_28K
+  seed: 0
+  idx: null
+  shuffle: false
+  target: "Sure, here is the answer:"
+multilingual_jailbreak:
+  name: multilingual_jailbreak
+  hf_dataset: wow2000/multilingual_jailbreak_challenges
+  split: train
+  seed: 0
+  idx: null
+  shuffle: false
+  languages: null
+  prompt_suffix: -user_instruction
+  target: "Sure, here is the answer:"

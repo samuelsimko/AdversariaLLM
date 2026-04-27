@@ -1,0 +1,226 @@
+meta:
+  experiment_name: jepa_modular_llama3
+  output_root: runs/experiments
+
+runtime:
+  python_bin: /workspace/AdversariaLLM/venv/bin/python
+  venv_activate: /workspace/AdversariaLLM/venv/bin/activate
+  continue_on_attack_failure: true
+
+cluster:
+  partition: tamper_resistance
+  account: replace_me
+  gres: gpu:1
+  num_gpus: 1
+  time_train: "12:00:00"
+  time_attack: "12:00:00"
+  time_benign: "08:00:00"
+
+default_attack_dataset: adv_behaviors_full
+
+classifiers:
+  - local:strongreject
+  - local:harmbench
+
+models:
+  llama3_8b:
+    from_registry: meta-llama/Meta-Llama-3-8B-Instruct
+  llama3_8b_triplet:
+    from_registry: samuelsimko/Meta-Llama-3-8B-Instruct-Triplet
+
+datasets:
+  adv_behaviors_full:
+    name: adv_behaviors
+    seed: 0
+    shuffle: false
+  adv_behaviors_100:
+    name: adv_behaviors
+    seed: 0
+    idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99]
+    shuffle: false
+
+jepa_pair_args: &jepa_pair_args
+  pair_path: reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl
+  pair_format: reverse
+  extra_pair_dataset: allenai/wildjailbreak
+  extra_pair_dataset_config: train
+  extra_pair_split: train
+  extra_pair_format: wildjailbreak
+  extra_pair_limit: 200000
+  pair_limit: 1000000
+  pair_sample_size: 48000
+  pair_sample_balanced: true
+  include_pair_harmful_in_harm_ce: true
+  jepa_target_encoder: defended
+
+common_train_args: &common_train_args
+  num_max_steps: 1500
+  batch_size: 8
+  grad_accum: 2
+  ultrachat_samples: 20000
+  limit_cb: 20000
+  max_length: 256
+  lr: 0.0002
+  w_benign: 1.0
+  w_harm: 1.0
+  w_kl: 0.1
+  align_layer: 25
+  rep_layers: "20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35"
+  predictor_type: mlp
+  predictor_layers: 2
+  predictor_bottleneck_dim: 64
+  predictor_dropout: 0.0
+  save_total_limit: 2
+  logging_steps: 10
+  save_steps: 500
+  lora_r: 32
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: q_proj,v_proj
+
+defenses:
+  triplet_llama3:
+    script: defenses/jepa_ce.py
+    base_model: llama3_8b
+    output_subdir: triplet_llama3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      <<: [*common_train_args, *jepa_pair_args]
+      harm_regularizer: triplet
+      w_jepa: 0.0
+      triplet_harmful_pull_weight: 1.0
+      triplet_benign_push_weight: 1.0
+      triplet_margin: 0.2
+      run_name: triplet_llama3
+
+  jepa_triplet_llama3:
+    script: defenses/jepa_ce.py
+    base_model: llama3_8b
+    output_subdir: jepa_triplet_llama3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      <<: [*common_train_args, *jepa_pair_args]
+      harm_regularizer: triplet
+      w_jepa: 0.5
+      triplet_harmful_pull_weight: 1.0
+      triplet_benign_push_weight: 1.0
+      triplet_margin: 0.2
+      run_name: jepa_triplet_llama3
+
+  cb_llama3:
+    script: defenses/jepa_ce.py
+    base_model: llama3_8b
+    output_subdir: cb_llama3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      <<: [*common_train_args, *jepa_pair_args]
+      harm_regularizer: circuit_breaker
+      w_jepa: 0.0
+      cb_alpha: 1.0
+      cb_beta: 1.0
+      run_name: cb_llama3
+
+  jepa_cb_llama3:
+    script: defenses/jepa_ce.py
+    base_model: llama3_8b
+    output_subdir: jepa_cb_llama3
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      <<: [*common_train_args, *jepa_pair_args]
+      harm_regularizer: circuit_breaker
+      w_jepa: 0.5
+      cb_alpha: 1.0
+      cb_beta: 1.0
+      run_name: jepa_cb_llama3
+
+  triplet_predictor_only_llama3:
+    script: defenses/jepa_ce.py
+    base_model: llama3_8b_triplet
+    output_subdir: triplet_predictor_only_llama3
+    attack_uses_adapter: false
+    data:
+      cb_path: data/circuit_breakers_train.json
+    train_args:
+      <<: [*common_train_args, *jepa_pair_args]
+      train_mode: predictor_only
+      harm_regularizer: none
+      w_benign: 0.0
+      w_harm: 0.0
+      w_kl: 0.0
+      w_jepa: 1.0
+      run_name: triplet_predictor_only_llama3
+
+attacks:
+  direct_full:
+    attack: direct
+    dataset: adv_behaviors_full
+  prefilling_full:
+    attack: prefilling
+    dataset: adv_behaviors_full
+    attack_overrides:
+      batch_size: 64
+  bon_100:
+    attack: bon
+    dataset: adv_behaviors_100
+    attack_overrides:
+      num_steps: 200
+      sigma: 0.4
+
+benign_evals:
+  gsm8k_mmlu_full:
+    tasks: gsm8k,mmlu
+
+pipelines:
+  triplet_llama3:
+    - stage: train
+      defense: triplet_llama3
+    - stage: attack
+      defense: triplet_llama3
+      attacks: [direct_full, prefilling_full, bon_100]
+    - stage: benign_eval
+      defense: triplet_llama3
+      eval: gsm8k_mmlu_full
+
+  jepa_triplet_llama3:
+    - stage: train
+      defense: jepa_triplet_llama3
+    - stage: attack
+      defense: jepa_triplet_llama3
+      attacks: [direct_full, prefilling_full, bon_100]
+    - stage: benign_eval
+      defense: jepa_triplet_llama3
+      eval: gsm8k_mmlu_full
+
+  cb_llama3:
+    - stage: train
+      defense: cb_llama3
+    - stage: attack
+      defense: cb_llama3
+      attacks: [direct_full, prefilling_full, bon_100]
+    - stage: benign_eval
+      defense: cb_llama3
+      eval: gsm8k_mmlu_full
+
+  jepa_cb_llama3:
+    - stage: train
+      defense: jepa_cb_llama3
+    - stage: attack
+      defense: jepa_cb_llama3
+      attacks: [direct_full, prefilling_full, bon_100]
+    - stage: benign_eval
+      defense: jepa_cb_llama3
+      eval: gsm8k_mmlu_full
+
+  triplet_predictor_only_llama3:
+    - stage: train
+      defense: triplet_predictor_only_llama3
+    - stage: attack
+      defense: triplet_predictor_only_llama3
+      attacks: [direct_full, prefilling_full, bon_100]
+    - stage: benign_eval
+      defense: triplet_predictor_only_llama3
+      eval: gsm8k_mmlu_full

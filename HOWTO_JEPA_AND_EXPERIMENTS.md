@@ -203,7 +203,22 @@ python defenses/harmful_jepa_cb.py \
   --output_dir runs/harmful_jepa_llama3
 ```
 
-### 3.3 Attacking a trained defense by hand
+### 3.3 Other defense scripts in `defenses/`
+
+Same contract as the two above (LoRA adapter + manifest + `READY`), different objectives. Use any of these as a `script:` in an experiment YAML.
+
+| Script | Idea |
+|---|---|
+| `defenses/jepa_ce.py` | JEPA per-position predictor + a *pluggable* harmful regularizer (`--harm_regularizer ce_floor|circuit_breaker|triplet|none`) and a CE-loss term on benign data. Supports `--train_mode predictor_only` (freeze backbone, train only the predictor) and `--init_adapter_path` to continue training from an existing adapter. |
+| `defenses/ce_floor_base.py` | CE-floor only baseline: enforce a minimum CE loss on harmful prompts so the model cannot fluently complete them. |
+| `defenses/ce_floor_align_jepa.py` | CE-floor + `align_jepa`-style alignment combined. |
+| `defenses/ce_floor_refusal_attractor.py` | Representation-level defense with a learned "refusal attractor" subspace, plus margin/orthogonality terms. |
+| `defenses/honeypot_cb.py` | Honeypot-based defense: builds honeypot representations and trains margin losses (ref > honeypot > harmful in rep-space). |
+| `defenses/velocity_collapse_cb.py` | Velocity-based: collapse the hidden-state velocity of harmful prompts while preserving benign velocity. |
+
+After training, `scripts/evaluate_jepa_guardrail.py --run_dir <output_dir>` produces AUROC / TPR-at-FPR for predictor- and centroid-based guardrails over benign vs. jailbreak prompts (UltraChat / WildJailbreak / reverse-model holdout). Reads `manifest.json`; `adapter_path` may be `null` (e.g. predictor-only training), in which case it loads the base tokenizer and skips the LoRA wrap.
+
+### 3.4 Attacking a trained defense by hand
 
 Once any defense has written a `lora_adapter/`, you can attack it directly with `run_attacks.py`:
 

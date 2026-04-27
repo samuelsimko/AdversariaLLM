@@ -1,14 +1,88 @@
-outputs/
-*.pyc
-__pycache__
-multirun/
-.vscode/settings.json
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python packaging and build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test, type-checker, and tool caches
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
 pyrightconfig.json
-outputs_archive
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/settings.json
+.idea/
+
+# Logs
+*.log
+logs/
+
+# Hydra / experiment outputs
+outputs/
+outputs_archive/
+multirun/
+runs/
+experiments/results/
+experiments/generated_*.json
+
+# Model training artifacts
+checkpoint-*/
+**/checkpoint-*/
+lora/
+**/lora/
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Evaluation and visualization outputs
 evaluate/**/*.png
 evaluate/**/*.pdf
 evaluate/**/*.py
-cache
-viz
-wandb
+visualization/outputs/
+viz/
+
+# W&B and local caches
+wandb/
+cache/
 embeddings/
+
+# Project-local scratch/artifacts
+scripts/artifacts/
+tmp/
+tmp_*/

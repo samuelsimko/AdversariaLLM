@@ -220,8 +220,8 @@ def main(cfg: DictConfig) -> None:
                             attack_prompts.append(attack_prompt)
                             responses.append(completion)
 
-                    backend, _ = parse_judge_spec(classifier)
-                    if backend == "judgezoo":
+                    judge_backend, _ = parse_judge_spec(classifier)
+                    if judge_backend == "judgezoo":
                         without_results = judge(without_jailbreak_prompts, verbose=True)
                         with_results = judge(with_jailbreak_prompts, verbose=True)
                         results = build_judgezoo_dual_results(without_results, with_results)

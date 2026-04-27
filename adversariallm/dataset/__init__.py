@@ -1,7 +1,10 @@
 from .adv_behaviors import AdvBehaviorsConfig, AdvBehaviorsDataset
 from .alpaca import AlpacaConfig, AlpacaDataset
+from .jailbreak_prompts import JailbreakPromptsConfig, JailbreakPromptsDataset
+from .jailbreak_v28k import JailBreakV28KConfig, JailBreakV28KDataset
 from .jbb_behaviors import JBBBehaviorsConfig, JBBBehaviorsDataset
 from .mmlu import MMLUConfig, MMLUDataset
+from .multilingual_jailbreak import MultilingualJailbreakConfig, MultilingualJailbreakDataset
 from .or_bench import ORBenchConfig, ORBenchDataset
 from .prompt_dataset import PromptDataset
 from .refusal_direction import RefusalDirectionDataConfig, RefusalDirectionDataDataset
@@ -18,6 +21,12 @@ __all__ = [
     "RefusalDirectionDataDataset",
     "JBBBehaviorsConfig",
     "JBBBehaviorsDataset",
+    "JailbreakPromptsConfig",
+    "JailbreakPromptsDataset",
+    "JailBreakV28KConfig",
+    "JailBreakV28KDataset",
+    "MultilingualJailbreakConfig",
+    "MultilingualJailbreakDataset",
     "StrongRejectConfig",
     "StrongRejectDataset",
     "ORBenchConfig",

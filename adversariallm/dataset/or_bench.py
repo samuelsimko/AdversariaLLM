@@ -18,6 +18,8 @@ from .prompt_dataset import PromptDataset
 @dataclass
 class ORBenchConfig:
     name: str = "or_bench"
+    config_name: str = "or-bench-hard-1k"  # other options: "or-bench-80k", "or-bench-toxic"
+    split: str = "train"
     seed: int = 0
     idx: list[int] | int | str | None = None
     shuffle: bool = True
@@ -27,7 +29,7 @@ class ORBenchConfig:
 class ORBenchDataset(PromptDataset):
     def __init__(self, config: ORBenchConfig):
         super().__init__(config)
-        dataset = load_dataset("bench-llm/or-bench", "or-bench-hard-1k")["train"]
+        dataset = load_dataset("bench-llm/or-bench", config.config_name)[config.split]
         dataset = [d["prompt"] for d in dataset]
 
         self.idx, self.config_idx = self._select_idx(config, len(dataset))
@@ -42,5 +44,6 @@ class ORBenchDataset(PromptDataset):
         msg = self.messages[idx]
         conversation = [
             {"role": "user", "content": msg},
+            {"role": "assistant", "content": ""},
         ]
         return conversation

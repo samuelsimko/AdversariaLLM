@@ -50,6 +50,7 @@ defenses:
       w_harm: 1.0
       w_kl: 0.1
       w_jepa: 0.0
+      jepa_target_encoder: defended
       align_layer: 25
       predictor_type: mlp
       predictor_layers: 2
@@ -95,6 +96,7 @@ defenses:
       w_harm: 1.0
       w_kl: 0.1
       w_jepa: 0.5
+      jepa_target_encoder: defended
       align_layer: 25
       predictor_type: mlp
       predictor_layers: 2
@@ -140,6 +142,7 @@ defenses:
       w_harm: 1.0
       w_kl: 0.1
       w_jepa: 1.0
+      jepa_target_encoder: defended
       align_layer: 25
       predictor_type: mlp
       predictor_layers: 2

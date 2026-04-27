@@ -405,3 +405,14 @@ soft_prompt:
   early_stop_loss: 0.001
   add_space_before_target: false
   verbose: false
+  # Per-prompt hyperparam randomization (deterministic per behavior index, so
+  # the same idx draws the same params across all models being attacked).
+  randomize_per_prompt: false
+  randomize_seed: 2024
+  randomize_force_rand_init: true
+  num_tokens_min: 1
+  num_tokens_max: 10
+  num_steps_min: 100
+  num_steps_max: 700
+  lr_log10_min: -4.0
+  lr_log10_max: -1.0

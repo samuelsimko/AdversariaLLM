@@ -286,8 +286,9 @@ def resolve_model_for_attack(
         extra_overrides.extend(flatten_hydra_overrides(f"models.{model_key}", model_params, add=True))
 
     lora_path = None
-    if defense_cfg.get("script") is not None:
-        lora_path = out_root / defense_cfg["output_subdir"] / "lora_adapter"
+    if defense_cfg.get("script") is not None and defense_cfg.get("attack_uses_adapter", True):
+        adapter_subdir = defense_cfg.get("adapter_subdir", "lora_adapter")
+        lora_path = out_root / defense_cfg["output_subdir"] / adapter_subdir
         extra_overrides.extend(flatten_hydra_overrides("model_overrides.peft_path", str(lora_path), add=True))
         model_params["peft_path"] = str(lora_path)
 

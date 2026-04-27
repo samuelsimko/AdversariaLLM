@@ -101,3 +101,21 @@ Because the stored key differs (`strong_reject` vs `local:strongreject`), judgez
 ### Determinism
 
 All three entry points set `CUBLAS_WORKSPACE_CONFIG=":4096:8"` **before importing torch** and enable `torch.use_deterministic_algorithms(True, warn_only=True)`. Preserve this ordering when editing the top of these scripts.
+
+## Defenses, experiments, JEPA stack
+
+On top of the attack core there is a defense-training stack. Full walkthrough in `HOWTO_JEPA_AND_EXPERIMENTS.md`; key entry points:
+
+- **`defenses/`** — standalone training scripts, one per defense. Each writes `lora_adapter/`, `manifest.json`, optional `jepa_predictor.pt`, `metrics.csv`, and a `READY` sentinel under its `--output_dir`. Current set: `align_jepa.py`, `harmful_jepa_cb.py`, `jepa_ce.py` (pluggable harm regularizer: `none`/`ce_floor`/`circuit_breaker`/`triplet`, plus `train_mode={full,predictor_only}` and optional `--init_adapter_path` for continued training), `ce_floor_base.py`, `ce_floor_align_jepa.py`, `ce_floor_refusal_attractor.py`, `honeypot_cb.py`, `velocity_collapse_cb.py`.
+- **`experiments/run_experiment.py`** — YAML-first orchestrator that stitches `train → attack → benign_eval` per defense. Each stage is fingerprinted (SHA256 of stage config) so completed stages are reused across experiments by copy. Backends: `local`, `local_gpu` (sequential, respects `num_gpus`), `slurm` (sbatch with `--dependency=afterok` chains), `mock`. Outputs land under `runs/experiments/<name>/<defense.output_subdir>/`. Configs in `experiments/configs/*.yaml`.
+- **`reverse_model/`** — LoRA-fine-tuned model that maps harmful behaviors → synthetic jailbreak prompts. Output dataset (`cb_train_reverse_prompts_5000_random_temp.jsonl`, ~164 MB) is the default `--pair_path` for JEPA defenses; each `(generated_prompts[i], true_prompt)` becomes a (adversarial, clean) pair. Holdout split: `reverse_model/holdout.json` (500 behaviors, never seen during training). Trained/sampled by `scripts/train_reverse_model.py` and `scripts/generate_reverse_prompts.py`.
+- **`scripts/evaluate_jepa_guardrail.py`** — post-hoc eval of a trained JEPA defense. Loads the manifest + adapter + predictor, encodes texts at `align_layer` (and through the predictor head), and computes AUROC/TPR-at-FPR for centroid-based and predictor-based scores against benign vs. jailbreak prompts (UltraChat / WildJailbreak / reverse-model holdout).
+
+### Conventions for defense scripts
+
+Every defense in `defenses/` follows the same contract used by `experiments/run_experiment.py`:
+
+- Accepts `--model`, `--output_dir`, plus its own hyperparameters.
+- Writes `manifest.json` with at minimum: `schema_version`, `defense_name`, `base_model`, `adapter_type` (`"lora"` or `"none"`), `adapter_path` (relative path, or `null`), `training_completed`.
+- Touches `READY` on success. The orchestrator uses this sentinel + the fingerprint hash to short-circuit reruns.
+- For attack stages, `experiments/run_experiment.py` injects `+model_overrides.peft_path=<output_subdir>/<adapter_subdir>` (default `lora_adapter`). Set `attack_uses_adapter: false` on the defense YAML if the defense has no adapter (e.g. predictor-only training).

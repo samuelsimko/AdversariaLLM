@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from datasets import load_dataset
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, PeftModel, get_peft_model
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainerCallback, TrainingArguments
 
@@ -34,6 +34,7 @@ DEFAULT_W_JEPA = 0.5
 DEFAULT_ALIGN_LAYER = 25
 DEFAULT_REPORT_TO = "wandb"
 DEFAULT_SEED = 42
+DEFAULT_REP_LAYERS = list(range(20, 36))
 
 DEFAULT_LORA_R = 32
 DEFAULT_LORA_ALPHA = 16
@@ -501,6 +502,134 @@ def topk_kl_from_logits(adapted_logits: torch.Tensor, base_logits: torch.Tensor,
     return (base_probs * (base_selected - adapted_selected)).sum(dim=-1).mean()
 
 
+def parse_int_list(value: Optional[str], default: List[int]) -> List[int]:
+    if value is None or value == "":
+        return list(default)
+    return [int(chunk.strip()) for chunk in value.split(",") if chunk.strip()]
+
+
+def resolve_rep_layers(requested: List[int], hidden_state_count: int) -> List[int]:
+    if hidden_state_count <= 1:
+        return [0]
+    max_index = hidden_state_count - 1
+    resolved: List[int] = []
+    for raw in requested:
+        idx = hidden_state_count + raw if raw < 0 else raw
+        idx = min(max(idx, 1), max_index)
+        if idx not in resolved:
+            resolved.append(idx)
+    return resolved or [max_index]
+
+
+def pooled_assistant_rep(outputs, labels: torch.Tensor, rep_layers: List[int]) -> torch.Tensor:
+    hidden_states = outputs.hidden_states
+    selected_layers = resolve_rep_layers(rep_layers, len(hidden_states))
+    mask = labels.ne(-100).unsqueeze(-1)
+    pooled_layers = []
+    for layer_idx in selected_layers:
+        hidden = hidden_states[layer_idx]
+        layer_mask = mask.to(hidden.dtype)
+        denom = layer_mask.sum(dim=1).clamp_min(1.0)
+        pooled_layers.append((hidden * layer_mask).sum(dim=1) / denom)
+    return torch.stack(pooled_layers, dim=0).mean(dim=0)
+
+
+class HarmRegularizer:
+    name = "none"
+
+    def __call__(
+        self,
+        *,
+        model,
+        benign_inputs: Dict[str, torch.Tensor],
+        harmful_inputs: Dict[str, torch.Tensor],
+        benign_out,
+        harmful_out,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        device = model.device
+        return torch.zeros((), device=device), {}
+
+
+class CEFloorRegularizer(HarmRegularizer):
+    name = "ce_floor"
+
+    def __init__(self, harm_ce_min: float):
+        self.harm_ce_min = harm_ce_min
+
+    def __call__(self, *, model, benign_inputs, harmful_inputs, benign_out, harmful_out):
+        harmful_ce = token_average_ce_per_example(harmful_out.logits, harmful_inputs["labels"])
+        loss = F.relu(self.harm_ce_min - harmful_ce).pow(2).mean()
+        return loss, {
+            "loss/harm_ce_floor": loss.detach(),
+            "metrics/harm_ce_def": harmful_ce.mean().detach(),
+            "metrics/harm_ce_gap_to_floor": (harmful_ce.mean() - self.harm_ce_min).detach(),
+        }
+
+
+class CircuitBreakerRegularizer(HarmRegularizer):
+    name = "circuit_breaker"
+
+    def __init__(self, rep_layers: List[int], alpha: float, beta: float):
+        self.rep_layers = rep_layers
+        self.alpha = alpha
+        self.beta = beta
+
+    def __call__(self, *, model, benign_inputs, harmful_inputs, benign_out, harmful_out):
+        with no_adapter(model), torch.no_grad():
+            benign_base_out = model(**benign_inputs, output_hidden_states=True, use_cache=False)
+            harmful_base_out = model(**harmful_inputs, output_hidden_states=True, use_cache=False)
+
+        h_b = pooled_assistant_rep(benign_out, benign_inputs["labels"], self.rep_layers)
+        h_b_base = pooled_assistant_rep(benign_base_out, benign_inputs["labels"], self.rep_layers)
+        h_h = pooled_assistant_rep(harmful_out, harmful_inputs["labels"], self.rep_layers)
+        h_h_base = pooled_assistant_rep(harmful_base_out, harmful_inputs["labels"], self.rep_layers)
+
+        benign_anchor = F.mse_loss(h_b.float(), h_b_base.float())
+        harmful_break = F.relu(F.cosine_similarity(h_h.float(), h_h_base.float(), dim=-1)).mean()
+        loss = self.alpha * benign_anchor + self.beta * harmful_break
+        return loss, {
+            "loss/cb_benign_l2": benign_anchor.detach(),
+            "loss/cb_harmful_relu_cos": harmful_break.detach(),
+        }
+
+
+class TripletRegularizer(HarmRegularizer):
+    name = "triplet"
+
+    def __init__(self, rep_layers: List[int], harmful_pull_weight: float, benign_push_weight: float, margin: float):
+        self.rep_layers = rep_layers
+        self.harmful_pull_weight = harmful_pull_weight
+        self.benign_push_weight = benign_push_weight
+        self.margin = margin
+
+    def __call__(self, *, model, benign_inputs, harmful_inputs, benign_out, harmful_out):
+        h_h = F.normalize(pooled_assistant_rep(harmful_out, harmful_inputs["labels"], self.rep_layers).float(), dim=-1)
+        h_b = F.normalize(pooled_assistant_rep(benign_out, benign_inputs["labels"], self.rep_layers).float(), dim=-1)
+        harmful_mean = F.normalize(h_h.mean(dim=0, keepdim=True), dim=-1)
+
+        harmful_pull = (1.0 - (h_h * harmful_mean).sum(dim=-1)).mean()
+        benign_cos = (h_b * harmful_mean).sum(dim=-1)
+        benign_push = F.relu(benign_cos + self.margin).pow(2).mean()
+        loss = self.harmful_pull_weight * harmful_pull + self.benign_push_weight * benign_push
+        return loss, {
+            "loss/triplet_harmful_pull": harmful_pull.detach(),
+            "loss/triplet_benign_push": benign_push.detach(),
+            "metrics/triplet_benign_cos_to_harm_mean": benign_cos.mean().detach(),
+        }
+
+
+def build_harm_regularizer(args, rep_layers: List[int]) -> HarmRegularizer:
+    if args.train_mode == "predictor_only" or args.harm_regularizer == "none":
+        return HarmRegularizer()
+    if args.harm_regularizer == "ce_floor":
+        return CEFloorRegularizer(args.harm_ce_min)
+    if args.harm_regularizer == "circuit_breaker":
+        return CircuitBreakerRegularizer(rep_layers, args.cb_alpha, args.cb_beta)
+    if args.harm_regularizer == "triplet":
+        return TripletRegularizer(rep_layers, args.triplet_harmful_pull_weight, args.triplet_benign_push_weight, args.triplet_margin)
+    raise ValueError(f"Unknown harm_regularizer: {args.harm_regularizer}")
+
+
 class PerPositionPredictor(nn.Module):
     def __init__(
         self,
@@ -588,11 +717,13 @@ class JEPACETrainer(Trainer):
         benign_ds: Dataset,
         harmful_ds: Dataset,
         pair_ds: Dataset,
-        harm_ce_min: float,
+        harm_regularizer: HarmRegularizer,
+        train_mode: str,
         w_benign: float,
         w_harm: float,
         w_kl: float,
         w_jepa: float,
+        jepa_target_encoder: str,
         align_layer: int,
         seed: int,
         *args,
@@ -602,11 +733,13 @@ class JEPACETrainer(Trainer):
         self.benign_ds = benign_ds
         self.harmful_ds = harmful_ds
         self.pair_ds = pair_ds
-        self.harm_ce_min = harm_ce_min
+        self.harm_regularizer = harm_regularizer
+        self.train_mode = train_mode
         self.w_benign = w_benign
         self.w_harm = w_harm
         self.w_kl = w_kl
         self.w_jepa = w_jepa
+        self.jepa_target_encoder = jepa_target_encoder
         self.align_layer = align_layer
         self.seed = seed
 
@@ -653,7 +786,15 @@ class JEPACETrainer(Trainer):
             adv_hidden = adv_hidden.to(dtype=predictor_param.dtype)
         pred = model.jepa_predictor(adv_hidden)
 
-        with no_adapter(model):
+        if self.jepa_target_encoder == "base":
+            with no_adapter(model), torch.no_grad():
+                clean_out = model(
+                    input_ids=clean_ids,
+                    attention_mask=clean_mask,
+                    output_hidden_states=True,
+                    use_cache=False,
+                )
+        elif self.jepa_target_encoder == "defended":
             with torch.no_grad():
                 clean_out = model(
                     input_ids=clean_ids,
@@ -661,6 +802,8 @@ class JEPACETrainer(Trainer):
                     output_hidden_states=True,
                     use_cache=False,
                 )
+        else:
+            raise ValueError(f"Unknown jepa_target_encoder: {self.jepa_target_encoder}")
         clean_hidden = clean_out.hidden_states[align_layer]
         batch_idx = torch.arange(clean_hidden.size(0), device=device)
         target = clean_hidden[batch_idx, clean_last_idx, :].detach()
@@ -679,57 +822,70 @@ class JEPACETrainer(Trainer):
         benign_inputs = {k: v.to(device) for k, v in benign_batch.items()}
         harmful_inputs = {k: v.to(device) for k, v in harmful_batch.items()}
 
-        benign_out = model(**benign_inputs, use_cache=False)
-        harmful_out = model(**harmful_inputs, use_cache=False)
+        need_hidden = self.w_harm > 0.0 and self.harm_regularizer.name in {"circuit_breaker", "triplet"}
+        benign_out = model(**benign_inputs, output_hidden_states=need_hidden, use_cache=False)
+        harmful_out = model(**harmful_inputs, output_hidden_states=need_hidden, use_cache=False)
 
         benign_ce_def = token_average_ce_per_example(benign_out.logits, benign_inputs["labels"])
         harmful_ce_def = token_average_ce_per_example(harmful_out.logits, harmful_inputs["labels"])
 
         benign_lm_loss = benign_ce_def.mean()
         harmful_lm_loss = harmful_ce_def.mean()
-        harm_floor = F.relu(self.harm_ce_min - harmful_ce_def).pow(2).mean()
 
         benign_kl = torch.zeros((), device=device)
         benign_ce_base = torch.zeros((), device=device)
-        if self.w_kl > 0.0:
+        if self.w_kl > 0.0 and self.train_mode != "predictor_only":
             with no_adapter(model):
                 with torch.no_grad():
                     benign_base_out = model(**benign_inputs, use_cache=False)
             benign_ce_base = token_average_ce_per_example(benign_base_out.logits, benign_inputs["labels"]).mean()
             benign_kl = topk_kl_from_logits(benign_out.logits, benign_base_out.logits)
 
+        harm_loss = torch.zeros((), device=device)
+        harm_logs: Dict[str, torch.Tensor] = {}
+        if self.w_harm > 0.0 and self.train_mode != "predictor_only":
+            harm_loss, harm_logs = self.harm_regularizer(
+                model=model,
+                benign_inputs=benign_inputs,
+                harmful_inputs=harmful_inputs,
+                benign_out=benign_out,
+                harmful_out=harmful_out,
+            )
+
         jepa_loss = torch.zeros((), device=device)
         if self.w_jepa > 0.0:
             jepa_loss = self._jepa_loss(model, pair_batch)
 
         total_loss = (
-            self.w_benign * benign_lm_loss
-            + self.w_harm * harm_floor
+            (0.0 if self.train_mode == "predictor_only" else self.w_benign) * benign_lm_loss
+            + self.w_harm * harm_loss
             + self.w_kl * benign_kl
             + self.w_jepa * jepa_loss
         )
 
-        self.log(
-            {
-                "loss/lm_benign": benign_lm_loss.item(),
-                "loss/lm_harmful": harmful_lm_loss.item(),
-                "loss/harm_floor": harm_floor.item(),
-                "loss/benign_kl": benign_kl.item(),
-                "loss/jepa": jepa_loss.item(),
-                "loss/total": total_loss.item(),
-                "metrics/benign_ce_def": benign_lm_loss.item(),
-                "metrics/benign_ce_base": benign_ce_base.item(),
-                "metrics/harm_ce_def": harmful_lm_loss.item(),
-                "metrics/harm_ce_gap_to_floor": (harmful_lm_loss - self.harm_ce_min).item(),
-            }
-        )
+        logs = {
+            "loss/lm_benign": benign_lm_loss.item(),
+            "loss/lm_harmful": harmful_lm_loss.item(),
+            "loss/harm_regularizer": harm_loss.item(),
+            "loss/benign_kl": benign_kl.item(),
+            "loss/jepa": jepa_loss.item(),
+            "loss/total": total_loss.item(),
+            "metrics/benign_ce_def": benign_lm_loss.item(),
+            "metrics/benign_ce_base": benign_ce_base.item(),
+            "metrics/harm_ce_def": harmful_lm_loss.item(),
+        }
+        logs.update({key: value.item() for key, value in harm_logs.items()})
+        self.log(logs)
         return (total_loss, None) if return_outputs else total_loss
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train JEPA with a per-position predictor and CE-floor harmful regularizer.")
+    parser = argparse.ArgumentParser(description="Train JEPA with a pluggable harmful representation regularizer.")
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL)
     parser.add_argument("--cb_path", type=str, required=True)
+    parser.add_argument("--init_adapter_path", type=str, default=None)
+    parser.add_argument("--train_mode", type=str, default="full", choices=["full", "predictor_only"])
+    parser.add_argument("--harm_regularizer", type=str, default="ce_floor", choices=["none", "ce_floor", "circuit_breaker", "triplet"])
     parser.add_argument("--pair_path", type=str, default=None)
     parser.add_argument("--pair_dataset", type=str, default=None)
     parser.add_argument("--pair_dataset_config", type=str, default=None)
@@ -757,6 +913,13 @@ def main():
     parser.add_argument("--w_harm", type=float, default=DEFAULT_W_HARM)
     parser.add_argument("--w_kl", type=float, default=DEFAULT_W_KL)
     parser.add_argument("--w_jepa", type=float, default=DEFAULT_W_JEPA)
+    parser.add_argument("--jepa_target_encoder", type=str, default="base", choices=["base", "defended"])
+    parser.add_argument("--rep_layers", type=str, default=None)
+    parser.add_argument("--cb_alpha", type=float, default=1.0)
+    parser.add_argument("--cb_beta", type=float, default=1.0)
+    parser.add_argument("--triplet_harmful_pull_weight", type=float, default=1.0)
+    parser.add_argument("--triplet_benign_push_weight", type=float, default=1.0)
+    parser.add_argument("--triplet_margin", type=float, default=0.2)
     parser.add_argument("--align_layer", type=int, default=DEFAULT_ALIGN_LAYER)
     parser.add_argument("--predictor_type", type=str, default="mlp", choices=["identity", "linear", "mlp"])
     parser.add_argument("--predictor_layers", type=int, default=2)
@@ -775,6 +938,7 @@ def main():
     parser.add_argument("--lora_dropout", type=float, default=DEFAULT_LORA_DROPOUT)
     parser.add_argument("--target_modules", type=str, default="q_proj,v_proj")
     args = parser.parse_args()
+    rep_layers = parse_int_list(args.rep_layers, DEFAULT_REP_LAYERS)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -847,21 +1011,29 @@ def main():
         torch_dtype=torch.bfloat16,
         trust_remote_code=True,
     )
-    if args.target_modules:
-        target_modules = [x.strip() for x in args.target_modules.split(",") if x.strip()]
-    else:
-        target_modules = infer_lora_target_modules(model)
-    model = get_peft_model(
-        model,
-        LoraConfig(
-            r=args.lora_r,
-            lora_alpha=args.lora_alpha,
-            target_modules=target_modules,
-            lora_dropout=args.lora_dropout,
-            bias="none",
-            task_type="CAUSAL_LM",
-        ),
-    )
+    target_modules: List[str] = []
+    adapter_type = "none"
+    if args.init_adapter_path:
+        model = PeftModel.from_pretrained(model, args.init_adapter_path, is_trainable=args.train_mode == "full")
+        adapter_type = "lora"
+        target_modules = [x.strip() for x in args.target_modules.split(",") if x.strip()] if args.target_modules else []
+    elif args.train_mode == "full":
+        if args.target_modules:
+            target_modules = [x.strip() for x in args.target_modules.split(",") if x.strip()]
+        else:
+            target_modules = infer_lora_target_modules(model)
+        model = get_peft_model(
+            model,
+            LoraConfig(
+                r=args.lora_r,
+                lora_alpha=args.lora_alpha,
+                target_modules=target_modules,
+                lora_dropout=args.lora_dropout,
+                bias="none",
+                task_type="CAUSAL_LM",
+            ),
+        )
+        adapter_type = "lora"
     hidden_size = getattr(model.config, "hidden_size", None)
     if hidden_size is None:
         hidden_size = getattr(model.config, "d_model", None)
@@ -877,7 +1049,15 @@ def main():
     )
     model.to(args.device)
     model.jepa_predictor.to(device=args.device, dtype=torch.bfloat16)
-    model.train()
+    if args.train_mode == "predictor_only":
+        for name, param in model.named_parameters():
+            if not name.startswith("jepa_predictor."):
+                param.requires_grad_(False)
+    if args.train_mode == "predictor_only":
+        model.eval()
+        model.jepa_predictor.train()
+    else:
+        model.train()
 
     training_args = TrainingArguments(
         output_dir=args.output_dir,
@@ -906,11 +1086,13 @@ def main():
         benign_ds=benign_ds,
         harmful_ds=harmful_ds,
         pair_ds=pair_ds,
-        harm_ce_min=args.harm_ce_min,
+        harm_regularizer=build_harm_regularizer(args, rep_layers),
+        train_mode=args.train_mode,
         w_benign=args.w_benign,
         w_harm=args.w_harm,
         w_kl=args.w_kl,
         w_jepa=args.w_jepa,
+        jepa_target_encoder=args.jepa_target_encoder,
         align_layer=args.align_layer,
         seed=args.seed,
         args=training_args,
@@ -920,18 +1102,26 @@ def main():
 
     trainer.train()
     lora_dir = output_dir / "lora_adapter"
-    model.save_pretrained(str(lora_dir))
-    tokenizer.save_pretrained(str(lora_dir))
+    adapter_path: Optional[str] = None
+    if adapter_type == "lora":
+        model.save_pretrained(str(lora_dir))
+        tokenizer.save_pretrained(str(lora_dir))
+        adapter_path = "lora_adapter"
+    else:
+        tokenizer.save_pretrained(str(output_dir / "tokenizer"))
     torch.save(model.jepa_predictor.state_dict(), output_dir / "jepa_predictor.pt")
 
     manifest = {
         "schema_version": "1.0",
-        "defense_name": "jepa_ce",
+        "defense_name": "jepa_harm_regularized",
         "base_model": args.model,
-        "adapter_type": "lora",
-        "adapter_path": "lora_adapter",
+        "adapter_type": adapter_type,
+        "adapter_path": adapter_path,
+        "init_adapter_path": args.init_adapter_path,
         "predictor_path": "jepa_predictor.pt",
         "training_completed": True,
+        "train_mode": args.train_mode,
+        "harm_regularizer": args.harm_regularizer,
         "weights": {
             "w_benign": args.w_benign,
             "w_harm": args.w_harm,
@@ -966,10 +1156,17 @@ def main():
         },
         "config": {
             "harm_ce_min": args.harm_ce_min,
+            "rep_layers": rep_layers,
+            "cb_alpha": args.cb_alpha,
+            "cb_beta": args.cb_beta,
+            "triplet_harmful_pull_weight": args.triplet_harmful_pull_weight,
+            "triplet_benign_push_weight": args.triplet_benign_push_weight,
+            "triplet_margin": args.triplet_margin,
             "max_length": args.max_length,
             "batch_size": args.batch_size,
             "grad_accum": args.grad_accum,
             "align_layer": args.align_layer,
+            "jepa_target_encoder": args.jepa_target_encoder,
             "predictor_type": args.predictor_type,
             "predictor_layers": args.predictor_layers,
             "predictor_dropout": args.predictor_dropout,

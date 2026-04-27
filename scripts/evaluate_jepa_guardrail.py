@@ -31,11 +31,13 @@ def load_manifest(run_dir: Path) -> Dict[str, Any]:
 def load_model_and_predictor(run_dir: Path, device: str, dtype: torch.dtype):
     manifest = load_manifest(run_dir)
     base_model = manifest["base_model"]
-    adapter_dir = run_dir / manifest.get("adapter_path", "lora_adapter")
+    adapter_rel = manifest.get("adapter_path")
+    adapter_dir = run_dir / adapter_rel if adapter_rel else None
     predictor_path = run_dir / manifest.get("predictor_path", "jepa_predictor.pt")
     config = manifest.get("config", {})
 
-    tokenizer = AutoTokenizer.from_pretrained(str(adapter_dir), trust_remote_code=True)
+    tokenizer_source = str(adapter_dir) if adapter_dir is not None and adapter_dir.exists() else base_model
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -45,7 +47,8 @@ def load_model_and_predictor(run_dir: Path, device: str, dtype: torch.dtype):
         dtype=dtype,
         trust_remote_code=True,
     )
-    model = PeftModel.from_pretrained(model, str(adapter_dir))
+    if adapter_dir is not None:
+        model = PeftModel.from_pretrained(model, str(adapter_dir))
     if device != "cuda":
         model.to(device)
     model.eval()
