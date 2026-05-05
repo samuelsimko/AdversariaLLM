@@ -1,73 +1,157 @@
-# Phase 1 ablation pipeline
+# Phase 1 Ablation — Runbook
 
-Per-GPU sequential `train → probe → benign_eval` orchestrator for the 60+
-cell one-axis ablation around an anchor recipe.
+Per-GPU sequential `train → probe → benign` orchestrator for the 72-cell
+one-axis ablation around an anchor recipe.
 
-## Files
+This file is written as a runnable playbook. Follow it top-to-bottom.
 
-- `scripts/build_ablation_cells.py` — generates the cell list (writes
-  `scripts/ablation_cells.json` by default). 72 cells: 6
-  `(harm_reg × backbone)` × 12 `(anchor + matched no-PRA + 10 axis
-  variations including a P=Identity baseline)`.
-- `scripts/ablation_cells.json` — the generated cell list (commit if you
-  want to freeze it; otherwise regen on the target machine).
-- `scripts/run_ablation_pipeline.py` — orchestrator. Each GPU thread runs
-  cells sequentially through `train → probe → benign_eval`, writes one row
-  to `SUMMARY.csv` per completed cell.
+## 1. What it does
 
-## Anchor and axes
+For each cell (a tuple of training hyperparameters), it runs:
+
+1. **Train** a defended LoRA adapter on Llama-3-8B-Instruct or Qwen3-8B
+   via `defenses/jepa_ce.py` (1500 steps, batch 4 × grad_accum 2,
+   reverse-prompt pair data, circuit_breakers benign+harmful CE data).
+2. **Probe** the trained adapter using Wang et al.'s SVM/MLP/JEPA probe
+   harness (5-seed sweep on RS3 + RS1 hidden states extracted at the
+   cell's `align_layer`).
+3. **Benign-eval** the trained adapter on `gsm8k` via `lm_eval`
+   (limit 200 by default; `--skip-benign` to drop this stage).
+
+72 cells = 6 `(harm_reg × backbone)` × 12 `(anchor + matched no-PRA + 10
+axis-variation cells including a P=Identity baseline)`.
 
 ```
 anchor:  w_jepa=5, predictor_lr_multiplier=1, align_layer=30,
-         predictor_layers=2, predictor_bottleneck_dim=256
+         predictor_type=mlp, predictor_layers=2, predictor_bottleneck_dim=256
 axes:
-  w_jepa                ∈ {0 (no-PRA control), 1, 5, 10, 20}
+  w_jepa                ∈ {0 (matched no-PRA), 1, 5, 10, 20}
   predictor_lr_mult     ∈ {1, 100}
   align_layer           ∈ {20, 25, 30}
-  predictor_type        ∈ {mlp, identity}     # P=Identity baseline
-  predictor_layers      ∈ {2, 3}              # only when type=mlp
-  predictor_bottleneck  ∈ {64, 256, 512}      # only when type=mlp
-harm_reg ∈ {circuit_breaker, ce_floor, triplet}
-backbone ∈ {Llama-3-8B-Instruct, Qwen3-8B}
+  predictor_type        ∈ {mlp, identity}
+  predictor_layers      ∈ {2, 3}            (mlp only)
+  predictor_bottleneck  ∈ {64, 256, 512}    (mlp only)
+harm_reg  ∈ {circuit_breaker, ce_floor, triplet}
+backbone  ∈ {meta-llama/Meta-Llama-3-8B-Instruct, Qwen/Qwen3-8B}
 ```
 
-Other training knobs match `experiments/configs/headline_pra_joint_n50.yaml`
-(reverse-prompt pair_path, circuit_breakers_train cb_path, 1500 steps,
-batch=4 grad_accum=2, etc).
+Per-cell budget at production hyperparameters:
+- train ~22–27 min (Llama or Qwen 8B, 1500 steps)
+- probe ~3–4 min (5-seed sweep, extract states once)
+- benign ~3 min (gsm8k --limit 200)
+- **~30 min/cell**.
 
-## Data prerequisites
+With 8 GPUs and 72 cells: `72/8 × 30 ≈ 4.5h`.
+With 3 GPUs: `72/3 × 30 ≈ 12h`.
 
-These are not in the repo (large files); the orchestrator expects them:
+## 2. Prerequisites
 
-- `data/circuit_breakers_train.json` — from
-  [GraySwan-AI/circuit-breakers](https://github.com/GraySwanAI/circuit-breakers/blob/main/data/circuit_breakers_train.json),
-  or copy from another clone of this project.
-- `reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl` —
-  regenerate via `scripts/generate_reverse_prompts.py` (training a reverse
-  model first via `scripts/train_reverse_model.py`), or copy from another
-  clone.
-- `Why-Probe-Fails/` checkout at `/workspace/AdversariaLLM/Why-Probe-Fails`
-  with `data/RS3/{malicious,cleaned,paraphrased}/*.csv` and
-  `data/RS1/benign/*.csv`. Override the path with the `WPF_ROOT` constant
-  near the top of `run_ablation_pipeline.py`.
-- `.env` with `HF_TOKEN` (gated Llama-3 repo). Source it in the parent
-  shell before launching.
-
-## Running
+### 2a. Repository checkout
 
 ```bash
-# 1. Generate the cell list
+git clone <this repo>
+cd <this repo>
+git checkout ablation/phase1-orchestrator   # or merge it into main first
+```
+
+### 2b. Python environment
+
+Either pixi or pip/venv per the top-level CLAUDE.md. The orchestrator
+defaults `--python-bin` to whatever Python was used to run it (`sys.executable`),
+so launching with `python scripts/run_ablation_pipeline.py ...` from inside
+the activated env is enough. Override with `--python-bin /abs/path/to/python`
+if you need a different interpreter for the subprocesses.
+
+### 2c. Why-Probe-Fails repo
+
+The probe stage `cd`s into a Why-Probe-Fails checkout (separate repo —
+not a submodule of this one). Default location: `<this repo>/Why-Probe-Fails`.
+Override with `--wpf-root /abs/path` or `WPF_ROOT=/abs/path` env var.
+
+It must contain:
+- `scripts/extract_states.py` and `scripts/compare_probes.py`
+- `configs/rs3_advbench_jepa.json`
+- `data/RS3/{malicious,cleaned,paraphrased}/*.csv`
+- `data/RS1/{benign}/*.csv`
+
+If you don't have the Why-Probe-Fails checkout, ask Sam or clone from
+wherever its origin is.
+
+### 2d. Data files
+
+The orchestrator expects two large data files NOT committed to the repo:
+
+| Path | Source |
+|---|---|
+| `data/circuit_breakers_train.json` | [GraySwan-AI/circuit-breakers](https://github.com/GraySwanAI/circuit-breakers/tree/main/data) — copy the `circuit_breakers_train.json` file |
+| `reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl` | Generated by `scripts/train_reverse_model.py` + `scripts/generate_reverse_prompts.py`. If you don't have it, ask Sam (it's ~165 MB). |
+
+You can also override their paths via `--cb-path` and `--pair-path`.
+
+### 2e. Authentication
+
+Create `.env` at the repo root with:
+
+```bash
+export HF_TOKEN=<your token>          # required: Llama-3 is gated
+export WANDB_API_KEY=<your key>       # required: training scripts log to wandb
+```
+
+**Critical:** source the env file before launching the orchestrator.
+The training script will hard-error on first batch if `WANDB_API_KEY`
+is missing (`wandb.errors.UsageError: No API key configured`).
+
+```bash
+set -a && source .env && set +a
+```
+
+## 3. Verify with a smoke test (recommended)
+
+Always run a 1-cell smoke before committing to the full sweep. This
+catches path issues, auth issues, and data issues in 25–30 minutes
+instead of 12 hours.
+
+```bash
+# Generate the cell list (writes scripts/ablation_cells.json).
 PYTHONPATH=. python scripts/build_ablation_cells.py
 
-# 2. Smoke-test 1 cell first
+# Source auth env vars. Skipping this will break wandb at minute ~1 of training.
 set -a && source .env && set +a
+
+# Run only the first cell on GPU 0, skip benign for speed.
 PYTHONPATH=. python scripts/run_ablation_pipeline.py \
     --cells scripts/ablation_cells.json \
     --num-gpus 1 --gpu-ids 0 \
     --out-root runs/ablation_smoke \
-    --gsm8k-limit 50 --limit 1
+    --skip-benign --limit 1
+```
 
-# 3. Full sweep on 8 GPUs (~8h wall)
+Expected:
+- `[train] OK rc=0 dt=~1350s`
+- `[probe] OK rc=0 dt=~200s`
+- `runs/ablation_smoke/SUMMARY.csv` has one row with `train_status=ok probe_status=ok`
+  and four AUC numbers populated.
+
+If anything fails, inspect:
+- `runs/ablation_smoke/<cell>/logs/{train,probe,benign}.log`
+- The error printed at the bottom of the orchestrator stdout.
+
+Common failures and fixes:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `wandb.errors.UsageError: No API key configured` | didn't `source .env` | source it, retry |
+| `OSError: You are trying to access a gated repo` | no HF_TOKEN | set in `.env`, source it |
+| `FileNotFoundError: 'data/circuit_breakers_train.json'` | data file missing | see §2d |
+| `huggingface_hub.errors.HFValidationError: Repo id must be in the form ...` while loading adapter in extract_states | older orchestrator passed relative `--adapter_path` after a `cd`. Fixed in current code, but if you see this, pull. |
+| Probe fails with `Can't find 'adapter_config.json'` at the cell's adapter dir | training failed silently and never wrote the adapter | check `train.log` |
+| `--wpf-root` path doesn't exist | Why-Probe-Fails not checked out | clone it; override path |
+
+## 4. Full sweep
+
+```bash
+# 8 GPUs (assumes CUDA_VISIBLE_DEVICES sees GPUs 0..7)
+set -a && source .env && set +a
 PYTHONPATH=. python scripts/run_ablation_pipeline.py \
     --cells scripts/ablation_cells.json \
     --num-gpus 8 \
@@ -75,53 +159,105 @@ PYTHONPATH=. python scripts/run_ablation_pipeline.py \
     --gsm8k-limit 200
 ```
 
-Cells are round-robin distributed across GPUs. Per-cell budget at
-production hyperparameters: ~25 min train + ~5 min probe (5-seed sweep) +
-~2 min gsm8k(--limit 200) ≈ **~32 min/cell**. With 8 GPUs and 66 cells:
-`66/8 × 32 ≈ 4.4h`.
+CLI options:
+- `--num-gpus N`: round-robin across N GPUs (ids 0..N-1).
+- `--gpu-ids 0,1,2,3`: use these explicit GPU ids (overrides `--num-gpus`).
+- `--out-root <dir>`: per-cell output dirs and `SUMMARY.csv` go here.
+- `--gsm8k-limit N`: subset size for the gsm8k benign eval (default 200).
+- `--skip-benign`: drop the gsm8k stage entirely.
+- `--limit N`: only run the first N cells from the cell list (smoke).
+- `--python-bin PATH`: Python for subprocesses (default `sys.executable`).
+- `--wpf-root PATH`: Why-Probe-Fails repo path.
+- `--cb-path PATH` / `--pair-path PATH`: override data file paths.
 
-## Outputs
+The orchestrator prints a config summary at startup. It will refuse to
+run if any required path is missing, before any GPU work starts.
+
+## 5. Outputs
 
 ```
-runs/ablation_phase1/
-  SUMMARY.csv                        # one row per completed cell
+<out-root>/
+  SUMMARY.csv                            # one row per completed cell
   <cell_name>/
-    cell.json                        # the cell config
-    cell.json
-    lora_adapter/                    # trained LoRA
-    jepa_predictor.pt                # trained predictor
+    cell.json                            # input cell config
+    lora_adapter/                        # trained LoRA
+    jepa_predictor.pt                    # trained predictor (or null for identity)
     manifest.json
     metrics.csv
-    TRAIN_READY                      # sentinel: training done
+    TRAIN_READY                          # sentinel: training done
     probe/
-      states/                        # extracted hidden states
+      states/                            # extracted hidden states
       seed_{42,123,777,1234,9999}/
-        results.csv                  # per-(probe, slice) AUC
+        results.csv                      # per-(probe, slice) AUC
     PROBE_READY
     benign/
-      results*.json                  # lm-eval gsm8k results
+      results*.json                      # lm-eval gsm8k
     BENIGN_READY
     logs/{train,probe,benign}.log
 ```
 
-`SUMMARY.csv` columns: name, gpu, backbone, harm_regularizer, w_jepa,
-predictor_lr_multiplier, align_layer, predictor_layers,
-predictor_bottleneck_dim, train_status, train_seconds, probe_status,
-probe_seconds, benign_status, benign_seconds, auc_svm_raw,
-auc_mlp_no_jepa, auc_jepa, auc_svm_on_jepa_z, gsm8k_em, cell_seconds.
+`SUMMARY.csv` columns:
 
-The AUC columns are the 5-seed mean on the
-`ood_heldout_paraphrased_harmbench` slice (the JEPD paper's headline
-worst-slice).
+```
+name, gpu, backbone, harm_regularizer,
+w_jepa, predictor_lr_multiplier, align_layer,
+predictor_type, predictor_layers, predictor_bottleneck_dim,
+train_status, train_seconds,
+probe_status, probe_seconds,
+benign_status, benign_seconds,
+auc_svm_raw, auc_mlp_no_jepa, auc_jepa, auc_svm_on_jepa_z,
+gsm8k_em,
+cell_seconds
+```
 
-## Re-running
+The four `auc_*` columns are 5-seed means on
+`ood_heldout_paraphrased_harmbench` (the JEPD paper's headline worst-slice
+where Wang et al. show probes collapse). Per-seed/per-slice AUC is in the
+per-cell `probe/seed_*/results.csv` files.
 
-The orchestrator writes `TRAIN_READY`, `PROBE_READY`, `BENIGN_READY`
-sentinels per cell. Re-launching skips cached stages. Safe to Ctrl-C
-mid-run; the cell currently in flight will be killed but `SUMMARY.csv`
-preserves all completed rows.
+## 6. Resuming after a crash
 
-## Skipping benign eval
+Each stage writes a sentinel file (`TRAIN_READY`, `PROBE_READY`,
+`BENIGN_READY`) on success. Re-launching the orchestrator with the same
+`--out-root` skips any stage whose sentinel already exists, so:
 
-`--skip-benign` to drop the gsm8k stage. Saves ~2 min/cell, ~2h for the
-full 66-cell sweep on 1 GPU.
+- Crashed mid-train? Re-launch — partial trains rerun from scratch
+  (TRAIN_READY only lands at end), probes/benigns of completed cells skip.
+- Want to add gsm8k after a `--skip-benign` run? Drop `--skip-benign` and
+  re-launch — train+probe skip, benign runs.
+- Want to redo probes only? `rm <out-root>/<cell>/PROBE_READY` for each
+  affected cell, then re-launch.
+
+`SUMMARY.csv` is append-only (a row per `cell_seconds` write). On re-launch
+you'll get a second row per re-run cell with the new timings.
+
+## 7. Watching progress
+
+```bash
+# Cells completed so far
+wc -l <out-root>/SUMMARY.csv
+
+# Per-status counts (after a tail bytes' worth of rows)
+awk -F, 'NR>1 {print $11, $13}' <out-root>/SUMMARY.csv | sort | uniq -c
+
+# Best headline-slice AUC seen so far
+sort -t, -k17 -n -r <out-root>/SUMMARY.csv | head -10
+```
+
+Or live tail one log:
+
+```bash
+tail -F <out-root>/<cell_name>/logs/train.log
+```
+
+## 8. Generating the cell list
+
+`scripts/ablation_cells.json` is committed but regenerable:
+
+```bash
+PYTHONPATH=. python scripts/build_ablation_cells.py --out scripts/ablation_cells.json
+```
+
+Edit `ANCHOR`, `HARM_REGS`, `BACKBONES`, or `cells_for()` in
+`build_ablation_cells.py` to change the sweep. The orchestrator only reads
+the JSON, so you can hand-edit it too.

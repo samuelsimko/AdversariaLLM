@@ -39,12 +39,12 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PYTHON_BIN = "/workspace/AdversariaLLM/venv/bin/python"
-WPF_ROOT = Path("/workspace/AdversariaLLM/Why-Probe-Fails")
-ENV_FILE = REPO_ROOT / ".env"
 
-CB_PATH = REPO_ROOT / "data" / "circuit_breakers_train.json"
-PAIR_PATH = REPO_ROOT / "reverse_model" / "cb_train_reverse_prompts_5000_random_temp.jsonl"
+# Resolved at runtime from CLI flags / env vars. See main() for defaults.
+PYTHON_BIN: str = sys.executable
+WPF_ROOT: Path = Path(os.environ.get("WPF_ROOT", REPO_ROOT / "Why-Probe-Fails"))
+CB_PATH: Path = REPO_ROOT / "data" / "circuit_breakers_train.json"
+PAIR_PATH: Path = REPO_ROOT / "reverse_model" / "cb_train_reverse_prompts_5000_random_temp.jsonl"
 
 PROBE_CONFIG = "configs/rs3_advbench_jepa.json"
 PROBE_DATA_ROOTS = [
@@ -343,7 +343,43 @@ def main() -> None:
     ap.add_argument("--gsm8k-limit", type=int, default=200)
     ap.add_argument("--skip-benign", action="store_true")
     ap.add_argument("--limit", type=int, default=None, help="Only run the first N cells (for smoke tests).")
+    ap.add_argument("--python-bin", default=None,
+                    help="Python interpreter for subprocesses (default: this script's interpreter).")
+    ap.add_argument("--wpf-root", default=None,
+                    help="Why-Probe-Fails repo path (default: $WPF_ROOT or <repo>/Why-Probe-Fails).")
+    ap.add_argument("--cb-path", default=None,
+                    help="Path to circuit_breakers_train.json (default: <repo>/data/circuit_breakers_train.json).")
+    ap.add_argument("--pair-path", default=None,
+                    help="Path to reverse-prompt jsonl (default: <repo>/reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl).")
     args = ap.parse_args()
+
+    # Apply CLI overrides to the module-level path globals so the helper
+    # functions (train_cmd, probe_shell, benign_cmd) pick them up.
+    global PYTHON_BIN, WPF_ROOT, CB_PATH, PAIR_PATH
+    if args.python_bin:
+        PYTHON_BIN = args.python_bin
+    if args.wpf_root:
+        WPF_ROOT = Path(args.wpf_root).resolve()
+    if args.cb_path:
+        CB_PATH = Path(args.cb_path).resolve()
+    if args.pair_path:
+        PAIR_PATH = Path(args.pair_path).resolve()
+    # Verify all required paths exist before launching long jobs.
+    missing = []
+    if not Path(PYTHON_BIN).exists():
+        missing.append(f"python-bin: {PYTHON_BIN}")
+    if not WPF_ROOT.is_dir():
+        missing.append(f"wpf-root: {WPF_ROOT}")
+    if not CB_PATH.exists():
+        missing.append(f"cb-path: {CB_PATH}")
+    if not PAIR_PATH.exists():
+        missing.append(f"pair-path: {PAIR_PATH}")
+    if missing:
+        sys.exit("[run_ablation_pipeline] missing required paths:\n  " + "\n  ".join(missing))
+    log(f"PYTHON_BIN={PYTHON_BIN}  WPF_ROOT={WPF_ROOT}  CB_PATH={CB_PATH}")
+    log(f"PAIR_PATH={PAIR_PATH}")
+    # The TRAIN_DEFAULTS dict captured PAIR_PATH at module load; refresh if overridden.
+    TRAIN_DEFAULTS["pair_path"] = str(PAIR_PATH)
 
     cells = json.loads(Path(args.cells).read_text())
     if args.limit:
