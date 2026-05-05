@@ -1,0 +1,124 @@
+# BoN on 10 adv_behaviors prompts against every adapter we trained today.
+
+meta:
+  experiment_name: headline_bon_n10_alladapters
+  output_root: runs/experiments
+
+cluster: {}
+
+runtime:
+  python_bin: /workspace/AdversariaLLM/venv/bin/python
+  venv_activate: /workspace/AdversariaLLM/venv/bin/activate
+  env_file: .env
+  num_gpus: 3
+  continue_on_attack_failure: true
+
+classifiers: ["local:strongreject"]
+
+datasets:
+  adv_behaviors_n10:
+    name: adv_behaviors
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 10))"
+
+models:
+  q_cb_pra_joint_adapter:
+    id: Qwen/Qwen3-8B
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_pra_joint_n50/q_cb_pra_joint/lora_adapter
+  l_cb_pra_joint_adapter:
+    id: meta-llama/Meta-Llama-3-8B-Instruct
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_pra_joint_n50/l_cb_pra_joint/lora_adapter
+  l_triplet_pra_joint_adapter:
+    id: meta-llama/Meta-Llama-3-8B-Instruct
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_pra_joint_n50/l_triplet_pra_joint/lora_adapter
+  q_cb_no_pra_joint_adapter:
+    id: Qwen/Qwen3-8B
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_no_pra_joint_n50/q_cb_no_pra_joint/lora_adapter
+  l_cb_no_pra_joint_adapter:
+    id: meta-llama/Meta-Llama-3-8B-Instruct
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_no_pra_joint_n50/l_cb_no_pra_joint/lora_adapter
+  l_triplet_no_pra_joint_adapter:
+    id: meta-llama/Meta-Llama-3-8B-Instruct
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_no_pra_joint_n50/l_triplet_no_pra_joint/lora_adapter
+  q_ceflr_pra_wj_adapter:
+    id: Qwen/Qwen3-8B
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_wj_bigpred_n50/q_ceflr_pra_wj/lora_adapter
+  q_ceflr_no_pra_wj_adapter:
+    id: Qwen/Qwen3-8B
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_wj_bigpred_n50/q_ceflr_no_pra_wj/lora_adapter
+  q_triplet_pra_wj_adapter:
+    id: Qwen/Qwen3-8B
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_wj_bigpred_n50/q_triplet_pra_wj/lora_adapter
+
+defenses:
+  q_cb_pra_joint:
+    script: null
+    base_model: q_cb_pra_joint_adapter
+    output_subdir: q_cb_pra_joint
+    attack_uses_adapter: false
+  l_cb_pra_joint:
+    script: null
+    base_model: l_cb_pra_joint_adapter
+    output_subdir: l_cb_pra_joint
+    attack_uses_adapter: false
+  l_triplet_pra_joint:
+    script: null
+    base_model: l_triplet_pra_joint_adapter
+    output_subdir: l_triplet_pra_joint
+    attack_uses_adapter: false
+  q_cb_no_pra_joint:
+    script: null
+    base_model: q_cb_no_pra_joint_adapter
+    output_subdir: q_cb_no_pra_joint
+    attack_uses_adapter: false
+  l_cb_no_pra_joint:
+    script: null
+    base_model: l_cb_no_pra_joint_adapter
+    output_subdir: l_cb_no_pra_joint
+    attack_uses_adapter: false
+  l_triplet_no_pra_joint:
+    script: null
+    base_model: l_triplet_no_pra_joint_adapter
+    output_subdir: l_triplet_no_pra_joint
+    attack_uses_adapter: false
+  q_ceflr_pra_wj:
+    script: null
+    base_model: q_ceflr_pra_wj_adapter
+    output_subdir: q_ceflr_pra_wj
+    attack_uses_adapter: false
+  q_ceflr_no_pra_wj:
+    script: null
+    base_model: q_ceflr_no_pra_wj_adapter
+    output_subdir: q_ceflr_no_pra_wj
+    attack_uses_adapter: false
+  q_triplet_pra_wj:
+    script: null
+    base_model: q_triplet_pra_wj_adapter
+    output_subdir: q_triplet_pra_wj
+    attack_uses_adapter: false
+
+attacks:
+  bon_10:
+    attack: bon
+    dataset: adv_behaviors_n10
+
+pipelines:
+  q_cb_pra_joint:
+    - { stage: attack, defense: q_cb_pra_joint, attacks: [bon_10] }
+  l_cb_pra_joint:
+    - { stage: attack, defense: l_cb_pra_joint, attacks: [bon_10] }
+  l_triplet_pra_joint:
+    - { stage: attack, defense: l_triplet_pra_joint, attacks: [bon_10] }
+  q_cb_no_pra_joint:
+    - { stage: attack, defense: q_cb_no_pra_joint, attacks: [bon_10] }
+  l_cb_no_pra_joint:
+    - { stage: attack, defense: l_cb_no_pra_joint, attacks: [bon_10] }
+  l_triplet_no_pra_joint:
+    - { stage: attack, defense: l_triplet_no_pra_joint, attacks: [bon_10] }
+  q_ceflr_pra_wj:
+    - { stage: attack, defense: q_ceflr_pra_wj, attacks: [bon_10] }
+  q_ceflr_no_pra_wj:
+    - { stage: attack, defense: q_ceflr_no_pra_wj, attacks: [bon_10] }
+  q_triplet_pra_wj:
+    - { stage: attack, defense: q_triplet_pra_wj, attacks: [bon_10] }

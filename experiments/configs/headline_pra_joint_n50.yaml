@@ -1,0 +1,141 @@
+# Joint-best follow-up to headline_n25 — 3 cells, train + soft_prompt only, N=50.
+#
+# Hyperparameters (differ from headline_n25 PRA defaults):
+#   predictor_lr_multiplier: 1.0   (was 100.0; "LR=1")
+#   align_layer: 30                (was 25;    "layer=30")
+#   w_jepa: 5.0                    (unchanged; "λ=5")
+#   harm-reg: per-cell (CB or Triplet)
+#
+# Cells:
+#   q_cb_pra_joint       Qwen3,  harm_reg=circuit_breaker  — joint-best on best-performing matched pair (sanity check)
+#   l_cb_pra_joint       Llama3, harm_reg=circuit_breaker  — joint-best on the worst Llama regression
+#   l_triplet_pra_joint  Llama3, harm_reg=triplet          — joint-best on the second-worst Llama regression
+#
+# Stages per cell: train -> soft_prompt attack on adv_behaviors_n50.
+
+meta:
+  experiment_name: headline_pra_joint_n50
+  output_root: runs/experiments
+
+cluster: {}
+
+runtime:
+  python_bin: /workspace/AdversariaLLM/venv/bin/python
+  venv_activate: /workspace/AdversariaLLM/venv/bin/activate
+  env_file: .env
+  num_gpus: 3
+  continue_on_attack_failure: true
+
+classifiers: ["local:strongreject"]
+
+# ---------------------- Datasets ----------------------
+datasets:
+  adv_behaviors_n50:
+    name: adv_behaviors
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 50))"
+
+# ---------------------- Models ----------------------
+models:
+  l: { id: meta-llama/Meta-Llama-3-8B-Instruct }
+  q: { id: Qwen/Qwen3-8B }
+
+# ---------------------- Common training (PRA-joint defaults) ----------------------
+# Mirrors headline_n25 `common_train_args` except for the three knobs called out
+# in the task: predictor_lr_multiplier=1.0, align_layer=30, w_jepa=5.0.
+common: &common_train_args
+  num_max_steps: 1500
+  batch_size: 4
+  grad_accum: 2
+  ultrachat_samples: 5000
+  limit_cb: 5000
+  pair_limit: 100000
+  pair_sample_size: 8000
+  pair_sample_balanced: true
+  max_length: 256
+  lr: 0.0002
+  jepa_target_encoder: defended
+  align_layer: 30
+  predictor_type: mlp
+  predictor_layers: 2
+  predictor_bottleneck_dim: 256
+  predictor_dropout: 0.0
+  predictor_lr_multiplier: 1.0
+  jepa_target: prompt_only
+  report_to: wandb
+  save_total_limit: 1
+  logging_steps: 10
+  save_steps: 1500
+  lora_r: 32
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: q_proj,v_proj
+  pair_path: reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl
+  pair_format: reverse
+  w_benign: 0.1
+  w_harm: 1.0
+  w_kl: 1.0
+  w_jepa: 5.0
+
+# ---------------------- Defenses ----------------------
+defenses:
+  q_cb_pra_joint:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_cb_pra_joint
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      include_pair_harmful_in_harm_ce: true
+      cb_beta_start_mult: 10.0
+      cb_beta_decay_fraction: 1.0
+
+  l_cb_pra_joint:
+    script: defenses/jepa_ce.py
+    base_model: l
+    output_subdir: l_cb_pra_joint
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      include_pair_harmful_in_harm_ce: true
+      cb_beta_start_mult: 10.0
+      cb_beta_decay_fraction: 1.0
+
+  l_triplet_pra_joint:
+    script: defenses/jepa_ce.py
+    base_model: l
+    output_subdir: l_triplet_pra_joint
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: triplet
+      include_pair_harmful_in_harm_ce: true
+
+# ---------------------- Attacks ----------------------
+attacks:
+  soft_prompt_50:
+    attack: soft_prompt
+    dataset: adv_behaviors_n50
+
+# ---------------------- Pipelines ----------------------
+pipelines:
+  q_cb_pra_joint:
+    - { stage: train, defense: q_cb_pra_joint }
+    - stage: attack
+      defense: q_cb_pra_joint
+      attacks: [soft_prompt_50]
+
+  l_cb_pra_joint:
+    - { stage: train, defense: l_cb_pra_joint }
+    - stage: attack
+      defense: l_cb_pra_joint
+      attacks: [soft_prompt_50]
+
+  l_triplet_pra_joint:
+    - { stage: train, defense: l_triplet_pra_joint }
+    - stage: attack
+      defense: l_triplet_pra_joint
+      attacks: [soft_prompt_50]

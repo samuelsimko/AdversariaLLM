@@ -1,0 +1,65 @@
+# Wang-style probing on the headline_wj_bigpred_n50 adapters.
+#
+# Re-uses the 3 trained adapters from headline_wj_bigpred_n50 and runs
+# extract_states + compare_probes (Wang et al. setup) per cell at layer 30.
+# 5-seed sweep matching the JEPD paper headline.
+
+meta:
+  experiment_name: headline_wj_bigpred_probe
+  output_root: runs/experiments
+
+cluster: {}
+
+runtime:
+  python_bin: /workspace/AdversariaLLM/venv/bin/python
+  venv_activate: /workspace/AdversariaLLM/venv/bin/activate
+  env_file: .env
+  num_gpus: 3
+  continue_on_attack_failure: true
+
+models:
+  q_ceflr_pra_wj_adapter:
+    id: Qwen/Qwen3-8B
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_wj_bigpred_n50/q_ceflr_pra_wj/lora_adapter
+  q_ceflr_no_pra_wj_adapter:
+    id: Qwen/Qwen3-8B
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_wj_bigpred_n50/q_ceflr_no_pra_wj/lora_adapter
+  q_triplet_pra_wj_adapter:
+    id: Qwen/Qwen3-8B
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_wj_bigpred_n50/q_triplet_pra_wj/lora_adapter
+
+defenses:
+  q_ceflr_pra_wj:
+    script: null
+    base_model: q_ceflr_pra_wj_adapter
+    output_subdir: q_ceflr_pra_wj
+    attack_uses_adapter: false
+  q_ceflr_no_pra_wj:
+    script: null
+    base_model: q_ceflr_no_pra_wj_adapter
+    output_subdir: q_ceflr_no_pra_wj
+    attack_uses_adapter: false
+  q_triplet_pra_wj:
+    script: null
+    base_model: q_triplet_pra_wj_adapter
+    output_subdir: q_triplet_pra_wj
+    attack_uses_adapter: false
+
+probes:
+  rs3_jepa_5seed:
+    wpf_root: /workspace/AdversariaLLM/Why-Probe-Fails
+    layer_idx: 30
+    probe_config: configs/rs3_advbench_jepa.json
+    seeds: [42, 123, 777, 1234, 9999]
+    probes: [svm_raw, mlp_no_jepa, jepa, svm_on_jepa_z]
+    data_roots:
+      - { path: data/RS3, views: [malicious, cleaned, paraphrased] }
+      - { path: data/RS1, views: [benign] }
+
+pipelines:
+  q_ceflr_pra_wj:
+    - { stage: probe, defense: q_ceflr_pra_wj, probe: rs3_jepa_5seed }
+  q_ceflr_no_pra_wj:
+    - { stage: probe, defense: q_ceflr_no_pra_wj, probe: rs3_jepa_5seed }
+  q_triplet_pra_wj:
+    - { stage: probe, defense: q_triplet_pra_wj, probe: rs3_jepa_5seed }

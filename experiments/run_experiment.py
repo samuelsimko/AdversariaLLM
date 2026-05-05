@@ -8,10 +8,14 @@ import hashlib
 import inspect
 import json
 import re
+import shlex
 import shutil
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Local alias so the probe-stage builder reads cleanly.
+shlex_quote = shlex.quote
 
 import yaml
 
@@ -549,6 +553,7 @@ def main():
     defenses = cfg.get("defenses", {})
     attacks = cfg.get("attacks", {})
     benign_evals = cfg.get("benign_evals", {})
+    probes_cfg = cfg.get("probes", {})
 
     pipelines = cfg.get("pipelines")
     if pipelines is None:
@@ -883,6 +888,163 @@ def main():
                         "pipeline": pipeline_name,
                         "defense": defense_name,
                         "benign_eval": benign_name,
+                        "stage_dir": str(out_dir),
+                        "stdout_log": str(stdout_log),
+                        "stderr_log": str(stderr_log),
+                        "depends_on": deps,
+                        "fingerprint_hash": stable_hash(fingerprint),
+                    },
+                )
+            elif stage == "probe":
+                probe_name = step["probe"]
+                pcfg = probes_cfg[probe_name]
+                _, model_id, _, mparams = resolve_model_for_attack(
+                    defense_name=defense_name,
+                    defense_cfg=ddef,
+                    models_cfg=models,
+                    registry_models=registry_models,
+                    out_root=out_root,
+                )
+                # resolve_model_for_attack sets model_params["peft_path"] for
+                # trained-in-place defenses (out_root/<subdir>/lora_adapter); it
+                # also preserves any inline-set peft_path on ref cells.
+                lora_path_str = mparams.get("peft_path")
+                lora_path = Path(lora_path_str) if lora_path_str else None
+                out_dir = out_root / ddef["output_subdir"] / "probe" / probe_name
+                out_dir.mkdir(parents=True, exist_ok=True)
+                states_dir = out_dir / "states"
+
+                wpf_root = pcfg.get("wpf_root", "/workspace/AdversariaLLM/Why-Probe-Fails")
+                data_roots = list(pcfg.get("data_roots", []))
+                layer_idx = int(pcfg.get("layer_idx", -1))
+                probe_config_rel = pcfg.get("probe_config")
+                seeds = list(pcfg.get("seeds", [42]))
+                probes_list = list(pcfg.get("probes",
+                                            ["svm_raw", "mlp_no_jepa", "jepa", "svm_on_jepa_z"]))
+                with_analyses = bool(pcfg.get("with_analyses", False))
+
+                if not data_roots:
+                    raise ValueError(f"probe '{probe_name}': data_roots is required")
+                if not probe_config_rel:
+                    raise ValueError(f"probe '{probe_name}': probe_config is required")
+
+                # Build a single bash command: chained extract_states (per data_root)
+                # then a compare_probes invocation per seed. cd into wpf_root so the
+                # local `jepa` package is importable without PYTHONPATH gymnastics.
+                parts: list[str] = [
+                    f"cd {shlex_quote(wpf_root)}",
+                ]
+                for dr in data_roots:
+                    if isinstance(dr, str):
+                        dr_path, dr_views = dr, None
+                        dr_datasets = None
+                    else:
+                        dr_path = dr["path"]
+                        dr_views = dr.get("views")
+                        dr_datasets = dr.get("datasets")
+                    extract = [
+                        shlex_quote(python_bin),
+                        "scripts/extract_states.py",
+                        "--model_path", shlex_quote(model_id),
+                        "--data_root", shlex_quote(dr_path),
+                        "--layer_idx", str(layer_idx),
+                        "--out_dir", shlex_quote(str(states_dir)),
+                    ]
+                    if dr_views:
+                        extract += ["--views"] + [shlex_quote(v) for v in dr_views]
+                    if dr_datasets:
+                        extract += ["--datasets"] + [shlex_quote(d) for d in dr_datasets]
+                    if lora_path is not None:
+                        extract += ["--adapter_path", shlex_quote(str(lora_path))]
+                    parts.append(" ".join(extract))
+                for seed in seeds:
+                    seed_out = out_dir / f"seed_{seed}"
+                    cmp = [
+                        shlex_quote(python_bin),
+                        "scripts/compare_probes.py",
+                        "--config", shlex_quote(probe_config_rel),
+                        "--states_dir", shlex_quote(str(states_dir)),
+                        "--out_dir", shlex_quote(str(seed_out)),
+                        "--seed", str(seed),
+                        "--probes",
+                    ] + [shlex_quote(p) for p in probes_list]
+                    if with_analyses:
+                        cmp.append("--with_analyses")
+                    parts.append(" ".join(cmp))
+
+                probe_shell = " && ".join(parts)
+                probe_cmd = ["bash", "-lc", probe_shell]
+
+                fingerprint = {
+                    "pipeline": pipeline_name,
+                    "stage": "probe",
+                    "defense": defense_name,
+                    "probe": probe_name,
+                    "model": model_id,
+                    "lora_path": str(lora_path) if lora_path is not None else None,
+                    "wpf_root": wpf_root,
+                    "layer_idx": layer_idx,
+                    "data_roots": data_roots,
+                    "probe_config": probe_config_rel,
+                    "seeds": seeds,
+                    "probes": probes_list,
+                    "with_analyses": with_analyses,
+                }
+                if is_stage_done(out_dir, fingerprint):
+                    print(f"Skipping probe {probe_name} for {defense_name}")
+                    continue
+                reused_from = reuse_completed_stage(
+                    stage_dir=out_dir,
+                    fingerprint=fingerprint,
+                    completed_stage_index=completed_stage_index,
+                )
+                if reused_from is not None:
+                    print(f"Reused probe {probe_name} from {reused_from}")
+                    append_submission_record(
+                        jobs_path,
+                        {
+                            "job_id": None,
+                            "job_name": f"{pipeline_name}_probe_{probe_name}_{defense_name}",
+                            "stage": "probe",
+                            "pipeline": pipeline_name,
+                            "defense": defense_name,
+                            "probe": probe_name,
+                            "stage_dir": str(out_dir),
+                            "reused_from": str(reused_from),
+                            "depends_on": deps,
+                            "fingerprint_hash": stable_hash(fingerprint),
+                        },
+                    )
+                    continue
+
+                job_name = f"{pipeline_name}_probe_{probe_name}_{defense_name}"
+                wrapped = wrap_job_command(
+                    python_bin=python_bin,
+                    stage_dir=out_dir,
+                    job_name=job_name,
+                    job_type="probe",
+                    fingerprint=fingerprint,
+                    command=probe_cmd,
+                )
+                stdout_log = logs_dir / f"{job_name}.out"
+                stderr_log = logs_dir / f"{job_name}.err"
+                job_id = backend.submit(
+                    name=job_name,
+                    command=wrapped,
+                    time=get_time(cluster, "probe", "04:00:00"),
+                    output_log=str(stdout_log),
+                    error_log=str(stderr_log),
+                    depends_on=deps,
+                )
+                append_submission_record(
+                    jobs_path,
+                    {
+                        "job_id": job_id,
+                        "job_name": job_name,
+                        "stage": "probe",
+                        "pipeline": pipeline_name,
+                        "defense": defense_name,
+                        "probe": probe_name,
                         "stage_dir": str(out_dir),
                         "stdout_log": str(stdout_log),
                         "stderr_log": str(stderr_log),

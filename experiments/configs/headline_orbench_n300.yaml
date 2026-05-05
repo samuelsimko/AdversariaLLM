@@ -1,0 +1,105 @@
+# OR-Bench overrefusal eval on the 6 adapters from
+# headline_pra_joint_n50 + headline_no_pra_joint_n50.
+#
+# No training. Each cell points an inline-defined model at the existing LoRA
+# adapter on disk (peft_path) and runs `direct` over 300 OR-Bench prompts,
+# scored with local:overrefusal.
+
+meta:
+  experiment_name: headline_orbench_n300
+  output_root: runs/experiments
+
+cluster: {}
+
+runtime:
+  python_bin: /workspace/AdversariaLLM/venv/bin/python
+  venv_activate: /workspace/AdversariaLLM/venv/bin/activate
+  env_file: .env
+  num_gpus: 3
+  continue_on_attack_failure: true
+
+classifiers: ["local:overrefusal"]
+
+datasets:
+  or_bench_300:
+    name: or_bench
+    config_name: or-bench-80k
+    split: train
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 300))"
+
+# Six inline models, one per existing adapter. peft_path is passed through to
+# the attack model spec by normalize_inline_model.
+models:
+  l_cb_pra_adapter:
+    id: meta-llama/Meta-Llama-3-8B-Instruct
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_pra_joint_n50/l_cb_pra_joint/lora_adapter
+  l_triplet_pra_adapter:
+    id: meta-llama/Meta-Llama-3-8B-Instruct
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_pra_joint_n50/l_triplet_pra_joint/lora_adapter
+  q_cb_pra_adapter:
+    id: Qwen/Qwen3-8B
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_pra_joint_n50/q_cb_pra_joint/lora_adapter
+  l_cb_no_pra_adapter:
+    id: meta-llama/Meta-Llama-3-8B-Instruct
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_no_pra_joint_n50/l_cb_no_pra_joint/lora_adapter
+  l_triplet_no_pra_adapter:
+    id: meta-llama/Meta-Llama-3-8B-Instruct
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_no_pra_joint_n50/l_triplet_no_pra_joint/lora_adapter
+  q_cb_no_pra_adapter:
+    id: Qwen/Qwen3-8B
+    peft_path: /workspace/new_clone/AdversariaLLM/runs/experiments/headline_no_pra_joint_n50/q_cb_no_pra_joint/lora_adapter
+
+# script:null + attack_uses_adapter:false skips training and skips the auto
+# peft_path injection — the inline model already carries peft_path.
+defenses:
+  l_cb_pra:
+    script: null
+    base_model: l_cb_pra_adapter
+    output_subdir: l_cb_pra
+    attack_uses_adapter: false
+  l_triplet_pra:
+    script: null
+    base_model: l_triplet_pra_adapter
+    output_subdir: l_triplet_pra
+    attack_uses_adapter: false
+  q_cb_pra:
+    script: null
+    base_model: q_cb_pra_adapter
+    output_subdir: q_cb_pra
+    attack_uses_adapter: false
+  l_cb_no_pra:
+    script: null
+    base_model: l_cb_no_pra_adapter
+    output_subdir: l_cb_no_pra
+    attack_uses_adapter: false
+  l_triplet_no_pra:
+    script: null
+    base_model: l_triplet_no_pra_adapter
+    output_subdir: l_triplet_no_pra
+    attack_uses_adapter: false
+  q_cb_no_pra:
+    script: null
+    base_model: q_cb_no_pra_adapter
+    output_subdir: q_cb_no_pra
+    attack_uses_adapter: false
+
+attacks:
+  or_bench_overrefusal:
+    attack: direct
+    dataset: or_bench_300
+
+pipelines:
+  l_cb_pra:
+    - { stage: attack, defense: l_cb_pra, attacks: [or_bench_overrefusal] }
+  l_triplet_pra:
+    - { stage: attack, defense: l_triplet_pra, attacks: [or_bench_overrefusal] }
+  q_cb_pra:
+    - { stage: attack, defense: q_cb_pra, attacks: [or_bench_overrefusal] }
+  l_cb_no_pra:
+    - { stage: attack, defense: l_cb_no_pra, attacks: [or_bench_overrefusal] }
+  l_triplet_no_pra:
+    - { stage: attack, defense: l_triplet_no_pra, attacks: [or_bench_overrefusal] }
+  q_cb_no_pra:
+    - { stage: attack, defense: q_cb_no_pra, attacks: [or_bench_overrefusal] }

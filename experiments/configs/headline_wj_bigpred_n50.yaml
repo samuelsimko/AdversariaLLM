@@ -1,0 +1,137 @@
+# WildJailbreak/WildGuard training, bigger predictor.
+#
+# Same dataset wiring as ablation_wj.yaml (built by scripts/build_wildjailbreak_data.py):
+#   - cb_path:           data/wildjailbreak_harmful.json
+#   - pair_path:         data/wildjailbreak_pairs.jsonl    (pair_format: wildjailbreak)
+#   - extra_benign_path: data/wildjailbreak_benign.jsonl
+#
+# Predictor changes vs headline_pra_joint_n50:
+#   - predictor_layers:          2  ->  3
+#   - predictor_bottleneck_dim:  256 -> 512
+#   - predictor_lr_multiplier:   1.0 (the "lr=1" knob)
+#
+# Cells (one per GPU):
+#   q_ceflr_pra_wj    Qwen3, harm_reg=ce_floor,        w_jepa=5.0
+#   q_ceflr_no_pra_wj Qwen3, harm_reg=ce_floor,        w_jepa=0.0  (matched control)
+#   q_triplet_pra_wj  Qwen3, harm_reg=triplet,         w_jepa=5.0  (for fun)
+#
+# Stages per cell: train -> soft_prompt attack on adv_behaviors[0..49].
+
+meta:
+  experiment_name: headline_wj_bigpred_n50
+  output_root: runs/experiments
+
+cluster: {}
+
+runtime:
+  python_bin: /workspace/AdversariaLLM/venv/bin/python
+  venv_activate: /workspace/AdversariaLLM/venv/bin/activate
+  env_file: .env
+  num_gpus: 3
+  continue_on_attack_failure: true
+
+classifiers: ["local:strongreject"]
+
+datasets:
+  adv_behaviors_n50:
+    name: adv_behaviors
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 50))"
+
+models:
+  q: { id: Qwen/Qwen3-8B }
+
+# Shared training knobs. Per-cell w_jepa + harm_regularizer override below.
+common: &common_train_args
+  num_max_steps: 1500
+  batch_size: 4
+  grad_accum: 2
+  ultrachat_samples: 5000
+  limit_cb: 5000
+  pair_limit: 100000
+  pair_sample_size: 8000
+  pair_sample_balanced: true
+  max_length: 256
+  lr: 0.0002
+  jepa_target_encoder: defended
+  align_layer: 30
+  predictor_type: mlp
+  predictor_layers: 3                 # bigger
+  predictor_bottleneck_dim: 512       # bigger
+  predictor_dropout: 0.0
+  predictor_lr_multiplier: 1.0        # "lr=1"
+  jepa_target: prompt_only
+  report_to: wandb
+  save_total_limit: 1
+  logging_steps: 10
+  save_steps: 1500
+  lora_r: 32
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: q_proj,v_proj
+  pair_path: data/wildjailbreak_pairs.jsonl
+  pair_format: wildjailbreak
+  extra_benign_path: data/wildjailbreak_benign.jsonl
+  extra_benign_samples: 5000
+  include_pair_harmful_in_harm_ce: false   # WJ-aligned: harm CE comes from cb_path only
+  w_benign: 0.1
+  w_harm: 1.0
+  w_kl: 1.0
+
+defenses:
+  q_ceflr_pra_wj:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_ceflr_pra_wj
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: ce_floor
+      harm_ce_min: 5.0
+      w_jepa: 5.0
+
+  q_ceflr_no_pra_wj:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_ceflr_no_pra_wj
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: ce_floor
+      harm_ce_min: 5.0
+      w_jepa: 0.0
+
+  q_triplet_pra_wj:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_triplet_pra_wj
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: triplet
+      w_jepa: 5.0
+
+attacks:
+  soft_prompt_50:
+    attack: soft_prompt
+    dataset: adv_behaviors_n50
+
+pipelines:
+  q_ceflr_pra_wj:
+    - { stage: train, defense: q_ceflr_pra_wj }
+    - stage: attack
+      defense: q_ceflr_pra_wj
+      attacks: [soft_prompt_50]
+
+  q_ceflr_no_pra_wj:
+    - { stage: train, defense: q_ceflr_no_pra_wj }
+    - stage: attack
+      defense: q_ceflr_no_pra_wj
+      attacks: [soft_prompt_50]
+
+  q_triplet_pra_wj:
+    - { stage: train, defense: q_triplet_pra_wj }
+    - stage: attack
+      defense: q_triplet_pra_wj
+      attacks: [soft_prompt_50]

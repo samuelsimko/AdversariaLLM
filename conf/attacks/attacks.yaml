@@ -405,6 +405,12 @@ soft_prompt:
   early_stop_loss: 0.001
   add_space_before_target: false
   verbose: false
+  # Batched soft-prompt optimization. When >1, the attack groups prompts whose
+  # per-iteration config (lr, num_tokens, num_steps, init string, early_stop)
+  # matches into one Adam optimization. Per-row early-stop is handled via a
+  # done-mask. 1 = original sequential behavior. With N=50 and the 10-entry
+  # config_pool the natural ceiling is ~5 rows per bucket.
+  batch_size: 1
   # Per-prompt hyperparam randomization (deterministic per behavior index, so
   # the same idx draws the same params across all models being attacked).
   randomize_per_prompt: false
