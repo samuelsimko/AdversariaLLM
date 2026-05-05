@@ -1,0 +1,482 @@
+# Headline experiment — first batch at N=25 for expensive attacks, full N for cheap.
+# Hyperparams: w_jepa=5 (YOLO based on Qwen ablation); predLR=100 (default); other defaults.
+# After N=25 results look reasonable, re-run with --extend-idx and idx range bumped to 0-49 then 0-99.
+#
+# Cells:
+#   8 trained: l/q × {cb_sched, triplet} × {pra, no_pra}
+#   5 reference: 2 base models + 3 published Llama defenses
+#
+# Attacks per defense:
+#   N=25 (expensive): bon, soft_prompt, pgd
+#   N=25 (jbb-specific): inpainting (jbb_behaviors only)
+#   N=100 (cheap):   direct, prefilling, human_jailbreaks
+#   over-refusal:    or_bench (300 prompts)
+#   benign:          gsm8k (full), mmlu (full), truthfulqa_mc2 (full)
+
+meta:
+  experiment_name: headline_n25
+  output_root: runs/experiments
+
+cluster: {}
+
+runtime:
+  num_gpus: 8
+  continue_on_attack_failure: true
+
+classifiers: ["local:strongreject"]
+
+# ---------------------- Datasets ----------------------
+datasets:
+  adv_behaviors_n25:
+    name: adv_behaviors
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 25))"
+  adv_behaviors_n100:
+    name: adv_behaviors
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 100))"
+  jbb_behaviors_n25:
+    name: jbb_behaviors
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 25))"
+  or_bench_300:
+    name: or_bench
+    config_name: or-bench-80k
+    split: train
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 300))"
+
+# ---------------------- Models ----------------------
+models:
+  l: { id: meta-llama/Meta-Llama-3-8B-Instruct }
+  q: { id: Qwen/Qwen3-8B }
+  l_grayswan_rr: { id: GraySwanAI/Llama-3-8B-Instruct-RR }
+  l_simko_triplet: { id: samuelsimko/Meta-Llama-3-8B-Instruct-Triplet }
+  l_lat: { id: LLM-LAT/robust-llama3-8b-instruct }
+
+# ---------------------- Common training (PRA defaults) ----------------------
+common: &common_train_args
+  num_max_steps: 1500
+  batch_size: 4
+  grad_accum: 2
+  ultrachat_samples: 5000
+  limit_cb: 5000
+  pair_limit: 100000
+  pair_sample_size: 8000
+  pair_sample_balanced: true
+  max_length: 256
+  lr: 0.0002
+  jepa_target_encoder: defended
+  align_layer: 25                        # default; ablation showed 30 best on Qwen but doesn't stack
+  predictor_type: mlp
+  predictor_layers: 2
+  predictor_bottleneck_dim: 256
+  predictor_dropout: 0.0
+  predictor_lr_multiplier: 100.0         # default (Qwen w_jepa=5 win was at this LR)
+  jepa_target: prompt_only
+  report_to: wandb
+  save_total_limit: 1
+  logging_steps: 10
+  save_steps: 1500
+  lora_r: 32
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: q_proj,v_proj
+  pair_path: reverse_model/cb_train_reverse_prompts_5000_random_temp.jsonl
+  pair_format: reverse
+  w_benign: 0.1
+  w_harm: 1.0
+  w_kl: 1.0
+  # w_jepa is set per-cell (5.0 for PRA cells, 0.0 for matched controls)
+
+# ---------------------- Defenses ----------------------
+defenses:
+  # ----- Llama PRA cells (w_jepa=5) + matched controls -----
+  l_cb_pra:
+    script: defenses/jepa_ce.py
+    base_model: l
+    output_subdir: l_cb_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      include_pair_harmful_in_harm_ce: true
+      cb_beta_start_mult: 10.0
+      cb_beta_decay_fraction: 1.0
+      w_jepa: 5.0
+  l_cb_no_pra:
+    script: defenses/jepa_ce.py
+    base_model: l
+    output_subdir: l_cb_no_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      include_pair_harmful_in_harm_ce: true
+      cb_beta_start_mult: 10.0
+      cb_beta_decay_fraction: 1.0
+      w_jepa: 0.0
+  l_triplet_pra:
+    script: defenses/jepa_ce.py
+    base_model: l
+    output_subdir: l_triplet_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: triplet
+      include_pair_harmful_in_harm_ce: true
+      w_jepa: 5.0
+  l_triplet_no_pra:
+    script: defenses/jepa_ce.py
+    base_model: l
+    output_subdir: l_triplet_no_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: triplet
+      include_pair_harmful_in_harm_ce: true
+      w_jepa: 0.0
+  l_ce_in_pra:
+    script: defenses/jepa_ce.py
+    base_model: l
+    output_subdir: l_ce_in_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: ce_floor
+      harm_ce_min: 3.0
+      include_pair_harmful_in_harm_ce: true
+      w_jepa: 5.0
+  l_ce_in_no_pra:
+    script: defenses/jepa_ce.py
+    base_model: l
+    output_subdir: l_ce_in_no_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: ce_floor
+      harm_ce_min: 3.0
+      include_pair_harmful_in_harm_ce: true
+      w_jepa: 0.0
+
+  # ----- Qwen PRA cells (w_jepa=5) + matched controls -----
+  q_cb_pra:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_cb_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      include_pair_harmful_in_harm_ce: true
+      cb_beta_start_mult: 10.0
+      cb_beta_decay_fraction: 1.0
+      w_jepa: 5.0
+  q_cb_no_pra:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_cb_no_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      include_pair_harmful_in_harm_ce: true
+      cb_beta_start_mult: 10.0
+      cb_beta_decay_fraction: 1.0
+      w_jepa: 0.0
+  q_triplet_pra:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_triplet_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: triplet
+      include_pair_harmful_in_harm_ce: true
+      w_jepa: 5.0
+  q_triplet_no_pra:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_triplet_no_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: triplet
+      include_pair_harmful_in_harm_ce: true
+      w_jepa: 0.0
+  q_ce_in_pra:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_ce_in_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: ce_floor
+      harm_ce_min: 3.0
+      include_pair_harmful_in_harm_ce: true
+      w_jepa: 5.0
+  q_ce_in_no_pra:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_ce_in_no_pra
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: ce_floor
+      harm_ce_min: 3.0
+      include_pair_harmful_in_harm_ce: true
+      w_jepa: 0.0
+
+  # ----- Qwen ablation: assistant-token JEPA target (jepa_target=with_response) -----
+  # Compare against q_cb_pra / q_triplet_pra which use prompt_only.
+  q_cb_pra_withresp:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_cb_pra_withresp
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      include_pair_harmful_in_harm_ce: true
+      cb_beta_start_mult: 10.0
+      cb_beta_decay_fraction: 1.0
+      w_jepa: 5.0
+      jepa_target: with_response
+  q_triplet_pra_withresp:
+    script: defenses/jepa_ce.py
+    base_model: q
+    output_subdir: q_triplet_pra_withresp
+    data: { cb_path: data/circuit_breakers_train.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: triplet
+      include_pair_harmful_in_harm_ce: true
+      w_jepa: 5.0
+      jepa_target: with_response
+
+  # ----- Reference cells (no training; attack the published model directly) -----
+  ref_l_base:
+    script: null
+    base_model: l
+    output_subdir: ref_l_base
+    attack_uses_adapter: false
+  ref_q_base:
+    script: null
+    base_model: q
+    output_subdir: ref_q_base
+    attack_uses_adapter: false
+  ref_l_grayswan_rr:
+    script: null
+    base_model: l_grayswan_rr
+    output_subdir: ref_l_grayswan_rr
+    attack_uses_adapter: false
+  ref_l_simko_triplet:
+    script: null
+    base_model: l_simko_triplet
+    output_subdir: ref_l_simko_triplet
+    attack_uses_adapter: false
+  ref_l_lat:
+    script: null
+    base_model: l_lat
+    output_subdir: ref_l_lat
+    attack_uses_adapter: false
+
+# ---------------------- Attacks ----------------------
+attacks:
+  # Expensive attacks at N=25 (defaults — keep BoN num_steps=1000)
+  bon_25:
+    attack: bon
+    dataset: adv_behaviors_n25
+  soft_prompt_25:
+    attack: soft_prompt
+    dataset: adv_behaviors_n25
+  pgd_25:
+    attack: pgd
+    dataset: adv_behaviors_n25
+  inpainting_25:
+    attack: inpainting
+    dataset: jbb_behaviors_n25     # inpainting requires jbb_behaviors
+
+  # Cheap attacks at full N=100
+  direct_100:
+    attack: direct
+    dataset: adv_behaviors_n100
+  prefilling_100:
+    attack: prefilling
+    dataset: adv_behaviors_n100
+  human_jailbreaks_100:
+    attack: human_jailbreaks
+    dataset: adv_behaviors_n100
+
+  # Over-refusal at full N=300
+  or_bench_overrefusal:
+    attack: direct
+    dataset: or_bench_300
+    classifiers: ["local:overrefusal"]
+
+# ---------------------- Benign ----------------------
+benign_evals:
+  gsm8k_full:
+    tasks: gsm8k             # full 1319 examples
+  mmlu_full:
+    tasks: mmlu              # full 5-shot MMLU (~14k items)
+  truthfulqa_full:
+    tasks: truthfulqa_mc2    # full 817 mc2 examples
+
+# ---------------------- Pipelines ----------------------
+# Each cell goes: train (if applicable) -> attack stages -> benign_eval
+pipelines:
+  l_cb_pra:        &p_train_attack_full
+    - { stage: train, defense: l_cb_pra }
+    - stage: attack
+      defense: l_cb_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: l_cb_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: l_cb_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: l_cb_pra, benign_eval: truthfulqa_full }
+  l_cb_no_pra:
+    - { stage: train, defense: l_cb_no_pra }
+    - stage: attack
+      defense: l_cb_no_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: l_cb_no_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: l_cb_no_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: l_cb_no_pra, benign_eval: truthfulqa_full }
+  l_triplet_pra:
+    - { stage: train, defense: l_triplet_pra }
+    - stage: attack
+      defense: l_triplet_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: l_triplet_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: l_triplet_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: l_triplet_pra, benign_eval: truthfulqa_full }
+  l_triplet_no_pra:
+    - { stage: train, defense: l_triplet_no_pra }
+    - stage: attack
+      defense: l_triplet_no_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: l_triplet_no_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: l_triplet_no_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: l_triplet_no_pra, benign_eval: truthfulqa_full }
+  l_ce_in_pra:
+    - { stage: train, defense: l_ce_in_pra }
+    - stage: attack
+      defense: l_ce_in_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: l_ce_in_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: l_ce_in_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: l_ce_in_pra, benign_eval: truthfulqa_full }
+  l_ce_in_no_pra:
+    - { stage: train, defense: l_ce_in_no_pra }
+    - stage: attack
+      defense: l_ce_in_no_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: l_ce_in_no_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: l_ce_in_no_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: l_ce_in_no_pra, benign_eval: truthfulqa_full }
+  q_cb_pra:
+    - { stage: train, defense: q_cb_pra }
+    - stage: attack
+      defense: q_cb_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: q_cb_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: q_cb_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: q_cb_pra, benign_eval: truthfulqa_full }
+  q_cb_no_pra:
+    - { stage: train, defense: q_cb_no_pra }
+    - stage: attack
+      defense: q_cb_no_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: q_cb_no_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: q_cb_no_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: q_cb_no_pra, benign_eval: truthfulqa_full }
+  q_triplet_pra:
+    - { stage: train, defense: q_triplet_pra }
+    - stage: attack
+      defense: q_triplet_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: q_triplet_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: q_triplet_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: q_triplet_pra, benign_eval: truthfulqa_full }
+  q_triplet_no_pra:
+    - { stage: train, defense: q_triplet_no_pra }
+    - stage: attack
+      defense: q_triplet_no_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: q_triplet_no_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: q_triplet_no_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: q_triplet_no_pra, benign_eval: truthfulqa_full }
+  q_ce_in_pra:
+    - { stage: train, defense: q_ce_in_pra }
+    - stage: attack
+      defense: q_ce_in_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: q_ce_in_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: q_ce_in_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: q_ce_in_pra, benign_eval: truthfulqa_full }
+  q_ce_in_no_pra:
+    - { stage: train, defense: q_ce_in_no_pra }
+    - stage: attack
+      defense: q_ce_in_no_pra
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: q_ce_in_no_pra, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: q_ce_in_no_pra, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: q_ce_in_no_pra, benign_eval: truthfulqa_full }
+  # Qwen JEPA-target ablation (with_response vs prompt_only).
+  q_cb_pra_withresp:
+    - { stage: train, defense: q_cb_pra_withresp }
+    - stage: attack
+      defense: q_cb_pra_withresp
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: q_cb_pra_withresp, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: q_cb_pra_withresp, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: q_cb_pra_withresp, benign_eval: truthfulqa_full }
+  q_triplet_pra_withresp:
+    - { stage: train, defense: q_triplet_pra_withresp }
+    - stage: attack
+      defense: q_triplet_pra_withresp
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: q_triplet_pra_withresp, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: q_triplet_pra_withresp, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: q_triplet_pra_withresp, benign_eval: truthfulqa_full }
+  # Reference cells: no train; just attack the model directly
+  ref_l_base:
+    - stage: attack
+      defense: ref_l_base
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: ref_l_base, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: ref_l_base, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: ref_l_base, benign_eval: truthfulqa_full }
+  ref_q_base:
+    - stage: attack
+      defense: ref_q_base
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: ref_q_base, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: ref_q_base, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: ref_q_base, benign_eval: truthfulqa_full }
+  ref_l_grayswan_rr:
+    - stage: attack
+      defense: ref_l_grayswan_rr
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: ref_l_grayswan_rr, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: ref_l_grayswan_rr, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: ref_l_grayswan_rr, benign_eval: truthfulqa_full }
+  ref_l_simko_triplet:
+    - stage: attack
+      defense: ref_l_simko_triplet
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: ref_l_simko_triplet, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: ref_l_simko_triplet, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: ref_l_simko_triplet, benign_eval: truthfulqa_full }
+  ref_l_lat:
+    - stage: attack
+      defense: ref_l_lat
+      attacks: [bon_25, soft_prompt_25, pgd_25, inpainting_25, direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal]
+    - { stage: benign_eval, defense: ref_l_lat, benign_eval: gsm8k_full }
+    - { stage: benign_eval, defense: ref_l_lat, benign_eval: mmlu_full }
+    - { stage: benign_eval, defense: ref_l_lat, benign_eval: truthfulqa_full }
+attack_priority: [direct_100, prefilling_100, human_jailbreaks_100, or_bench_overrefusal, bon_25, inpainting_25, soft_prompt_25, pgd_25]
