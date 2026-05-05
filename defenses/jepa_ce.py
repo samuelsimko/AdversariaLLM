@@ -237,6 +237,27 @@ def load_ultrachat(num_samples: int, seed: int = 42) -> Tuple[List[str], List[st
     return prompts, responses
 
 
+def load_benign_from_path(path: str, num_samples: int, seed: int = 42) -> Tuple[List[str], List[str]]:
+    """Load benign (prompt, response) pairs from a JSON/JSONL file as a drop-in
+    replacement for UltraChat. Each row should have at least {prompt, response}
+    fields (e.g., from WildJailbreak's vanilla_benign + adversarial_benign rows
+    via scripts/build_wildjailbreak_data.py).
+    """
+    records = _load_json_or_jsonl(path)
+    rng = random.Random(seed)
+    rng.shuffle(records)
+    if num_samples and num_samples < len(records):
+        records = records[:num_samples]
+    prompts, responses = [], []
+    for rec in records:
+        prompt = (rec.get("prompt") or rec.get("user") or "").strip()
+        response = (rec.get("response") or rec.get("output") or rec.get("assistant") or rec.get("completion") or "").strip()
+        if prompt and response:
+            prompts.append(prompt)
+            responses.append(response)
+    return prompts, responses
+
+
 def load_cb(path: str, limit: int) -> Tuple[List[str], List[str]]:
     records = _load_json_or_jsonl(path)[:limit]
     prompts = [record["prompt"] for record in records]
@@ -1005,6 +1026,12 @@ def main():
     parser.add_argument("--extra_pair_limit", type=int, default=0)
     parser.add_argument("--output_dir", type=str, default="./jepa_ce")
     parser.add_argument("--ultrachat_samples", type=int, default=DEFAULT_ULTRACHAT_SAMPLES)
+    parser.add_argument("--extra_benign_path", type=str, default=None,
+                        help="Optional JSON/JSONL with [{prompt, response}, ...] to APPEND to UltraChat "
+                             "for the benign side. Used to add WildJailbreak benign rows (vanilla + adv) "
+                             "without dropping UltraChat. Pass --ultrachat_samples 0 to use only the extra source.")
+    parser.add_argument("--extra_benign_samples", type=int, default=0,
+                        help="If >0, cap rows from --extra_benign_path. 0 = use all rows in the file.")
     parser.add_argument("--limit_cb", type=int, default=DEFAULT_CB_LIMIT)
     parser.add_argument("--pair_limit", type=int, default=DEFAULT_PAIR_LIMIT)
     parser.add_argument("--pair_sample_size", type=int, default=0)
@@ -1067,7 +1094,22 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    benign_prompts, benign_responses = load_ultrachat(args.ultrachat_samples)
+    benign_prompts: List[str] = []
+    benign_responses: List[str] = []
+    if args.ultrachat_samples > 0:
+        u_prompts, u_responses = load_ultrachat(args.ultrachat_samples)
+        benign_prompts.extend(u_prompts)
+        benign_responses.extend(u_responses)
+        print(f"[benign] loaded {len(u_prompts)} from UltraChat")
+    if args.extra_benign_path:
+        e_prompts, e_responses = load_benign_from_path(
+            args.extra_benign_path,
+            args.extra_benign_samples,  # 0 = all
+        )
+        benign_prompts.extend(e_prompts)
+        benign_responses.extend(e_responses)
+        print(f"[benign] appended {len(e_prompts)} from {args.extra_benign_path}")
+    print(f"[benign] total: {len(benign_prompts)} prompt/response pairs")
     harmful_prompts, harmful_responses = load_cb(args.cb_path, args.limit_cb)
     pair_adv, pair_clean, pair_responses, pair_intents, pair_sources = load_jepa_pairs(
         pair_path=args.pair_path,
