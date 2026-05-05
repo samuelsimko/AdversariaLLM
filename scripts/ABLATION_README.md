@@ -6,8 +6,9 @@ cell one-axis ablation around an anchor recipe.
 ## Files
 
 - `scripts/build_ablation_cells.py` — generates the cell list (writes
-  `scripts/ablation_cells.json` by default). 66 cells: 6
-  `(harm_reg × backbone)` × 11 `(anchor + matched no-PRA + 9 axis variations)`.
+  `scripts/ablation_cells.json` by default). 72 cells: 6
+  `(harm_reg × backbone)` × 12 `(anchor + matched no-PRA + 10 axis
+  variations including a P=Identity baseline)`.
 - `scripts/ablation_cells.json` — the generated cell list (commit if you
   want to freeze it; otherwise regen on the target machine).
 - `scripts/run_ablation_pipeline.py` — orchestrator. Each GPU thread runs
@@ -23,8 +24,9 @@ axes:
   w_jepa                ∈ {0 (no-PRA control), 1, 5, 10, 20}
   predictor_lr_mult     ∈ {1, 100}
   align_layer           ∈ {20, 25, 30}
-  predictor_layers      ∈ {2, 3}
-  predictor_bottleneck  ∈ {64, 256, 512}
+  predictor_type        ∈ {mlp, identity}     # P=Identity baseline
+  predictor_layers      ∈ {2, 3}              # only when type=mlp
+  predictor_bottleneck  ∈ {64, 256, 512}      # only when type=mlp
 harm_reg ∈ {circuit_breaker, ce_floor, triplet}
 backbone ∈ {Llama-3-8B-Instruct, Qwen3-8B}
 ```

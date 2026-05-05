@@ -36,6 +36,7 @@ ANCHOR = dict(
     w_jepa=5.0,
     predictor_lr_multiplier=1.0,
     align_layer=30,
+    predictor_type="mlp",
     predictor_layers=2,
     predictor_bottleneck_dim=256,
 )
@@ -53,14 +54,19 @@ def make_cell(
 ) -> dict[str, Any]:
     args = dict(ANCHOR)
     args.update(overrides)
+    if args["predictor_type"] == "identity":
+        pred_tag = "Pid"
+    elif args["predictor_type"] == "linear":
+        pred_tag = "Plin"
+    else:
+        pred_tag = f"d{args['predictor_layers']}_K{args['predictor_bottleneck_dim']}"
     name_parts = [
         backbone,
         short_hr(harm_reg),
         f"wj{args['w_jepa']:g}",
         f"plr{args['predictor_lr_multiplier']:g}",
         f"L{args['align_layer']}",
-        f"d{args['predictor_layers']}",
-        f"K{args['predictor_bottleneck_dim']}",
+        pred_tag,
         suffix,
     ]
     name = "_".join(p for p in name_parts if p)
@@ -84,6 +90,10 @@ def cells_for(backbone: str, harm_reg: str) -> list[dict[str, Any]]:
     out.append(make_cell(backbone, harm_reg, dict(predictor_layers=3),               ""))
     for k in (64, 512):
         out.append(make_cell(backbone, harm_reg, dict(predictor_bottleneck_dim=k),    ""))
+    # P=Identity: predictor is the identity function (no learned head). Tests
+    # whether the JEPA-loss benefit comes from the learned predictor mapping
+    # or just from enforcing similarity between adv and clean reps directly.
+    out.append(make_cell(backbone, harm_reg, dict(predictor_type="identity"),        ""))
     # Dedup by name (anchor can equal a knob's anchor value).
     seen = set()
     deduped = []

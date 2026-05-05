@@ -6,6 +6,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -17,6 +18,7 @@
     "w_jepa": 0.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -28,6 +30,7 @@
     "w_jepa": 1.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -39,6 +42,7 @@
     "w_jepa": 10.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -50,6 +54,7 @@
     "w_jepa": 20.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -61,6 +66,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 100.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -72,6 +78,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 20,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -83,6 +90,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 25,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -94,6 +102,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 3,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -105,6 +114,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 64,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -116,8 +126,21 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 512,
+    "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
+  },
+  {
+    "name": "l_cb_wj5_plr1_L30_Pid",
+    "backbone": "l",
+    "harm_regularizer": "circuit_breaker",
+    "w_jepa": 5.0,
+    "predictor_lr_multiplier": 1.0,
+    "align_layer": 30,
+    "predictor_type": "identity",
+    "predictor_layers": 2,
+    "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
   },
   {
@@ -127,6 +150,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -138,6 +162,7 @@
     "w_jepa": 0.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -149,6 +174,7 @@
     "w_jepa": 1.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -160,6 +186,7 @@
     "w_jepa": 10.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -171,6 +198,7 @@
     "w_jepa": 20.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -182,6 +210,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 100.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -193,6 +222,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 20,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -204,6 +234,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 25,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -215,6 +246,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 3,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -226,6 +258,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 64,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -237,8 +270,21 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 512,
+    "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
+  },
+  {
+    "name": "l_ceflr_wj5_plr1_L30_Pid",
+    "backbone": "l",
+    "harm_regularizer": "ce_floor",
+    "w_jepa": 5.0,
+    "predictor_lr_multiplier": 1.0,
+    "align_layer": 30,
+    "predictor_type": "identity",
+    "predictor_layers": 2,
+    "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
   },
   {
@@ -248,6 +294,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -259,6 +306,7 @@
     "w_jepa": 0.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -270,6 +318,7 @@
     "w_jepa": 1.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -281,6 +330,7 @@
     "w_jepa": 10.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -292,6 +342,7 @@
     "w_jepa": 20.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -303,6 +354,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 100.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -314,6 +366,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 20,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -325,6 +378,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 25,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -336,6 +390,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 3,
     "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -347,6 +402,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 64,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -358,8 +414,21 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 512,
+    "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
+  },
+  {
+    "name": "l_tri_wj5_plr1_L30_Pid",
+    "backbone": "l",
+    "harm_regularizer": "triplet",
+    "w_jepa": 5.0,
+    "predictor_lr_multiplier": 1.0,
+    "align_layer": 30,
+    "predictor_type": "identity",
+    "predictor_layers": 2,
+    "predictor_bottleneck_dim": 256,
     "base_model": "meta-llama/Meta-Llama-3-8B-Instruct"
   },
   {
@@ -369,6 +438,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -380,6 +450,7 @@
     "w_jepa": 0.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -391,6 +462,7 @@
     "w_jepa": 1.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -402,6 +474,7 @@
     "w_jepa": 10.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -413,6 +486,7 @@
     "w_jepa": 20.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -424,6 +498,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 100.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -435,6 +510,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 20,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -446,6 +522,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 25,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -457,6 +534,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 3,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -468,6 +546,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 64,
     "base_model": "Qwen/Qwen3-8B"
@@ -479,8 +558,21 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 512,
+    "base_model": "Qwen/Qwen3-8B"
+  },
+  {
+    "name": "q_cb_wj5_plr1_L30_Pid",
+    "backbone": "q",
+    "harm_regularizer": "circuit_breaker",
+    "w_jepa": 5.0,
+    "predictor_lr_multiplier": 1.0,
+    "align_layer": 30,
+    "predictor_type": "identity",
+    "predictor_layers": 2,
+    "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
   },
   {
@@ -490,6 +582,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -501,6 +594,7 @@
     "w_jepa": 0.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -512,6 +606,7 @@
     "w_jepa": 1.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -523,6 +618,7 @@
     "w_jepa": 10.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -534,6 +630,7 @@
     "w_jepa": 20.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -545,6 +642,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 100.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -556,6 +654,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 20,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -567,6 +666,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 25,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -578,6 +678,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 3,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -589,6 +690,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 64,
     "base_model": "Qwen/Qwen3-8B"
@@ -600,8 +702,21 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 512,
+    "base_model": "Qwen/Qwen3-8B"
+  },
+  {
+    "name": "q_ceflr_wj5_plr1_L30_Pid",
+    "backbone": "q",
+    "harm_regularizer": "ce_floor",
+    "w_jepa": 5.0,
+    "predictor_lr_multiplier": 1.0,
+    "align_layer": 30,
+    "predictor_type": "identity",
+    "predictor_layers": 2,
+    "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
   },
   {
@@ -611,6 +726,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -622,6 +738,7 @@
     "w_jepa": 0.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -633,6 +750,7 @@
     "w_jepa": 1.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -644,6 +762,7 @@
     "w_jepa": 10.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -655,6 +774,7 @@
     "w_jepa": 20.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -666,6 +786,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 100.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -677,6 +798,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 20,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -688,6 +810,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 25,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -699,6 +822,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 3,
     "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
@@ -710,6 +834,7 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 64,
     "base_model": "Qwen/Qwen3-8B"
@@ -721,8 +846,21 @@
     "w_jepa": 5.0,
     "predictor_lr_multiplier": 1.0,
     "align_layer": 30,
+    "predictor_type": "mlp",
     "predictor_layers": 2,
     "predictor_bottleneck_dim": 512,
+    "base_model": "Qwen/Qwen3-8B"
+  },
+  {
+    "name": "q_tri_wj5_plr1_L30_Pid",
+    "backbone": "q",
+    "harm_regularizer": "triplet",
+    "w_jepa": 5.0,
+    "predictor_lr_multiplier": 1.0,
+    "align_layer": 30,
+    "predictor_type": "identity",
+    "predictor_layers": 2,
+    "predictor_bottleneck_dim": 256,
     "base_model": "Qwen/Qwen3-8B"
   }
 ]

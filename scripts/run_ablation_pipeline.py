@@ -68,7 +68,6 @@ TRAIN_DEFAULTS = dict(
     max_length=256,
     lr=0.0002,
     jepa_target_encoder="defended",
-    predictor_type="mlp",
     predictor_dropout=0.0,
     jepa_target="prompt_only",
     report_to="wandb",
@@ -117,6 +116,7 @@ def train_cmd(cell: dict, out_dir: Path) -> list[str]:
     args = dict(TRAIN_DEFAULTS)
     args.update(
         align_layer=cell["align_layer"],
+        predictor_type=cell.get("predictor_type", "mlp"),
         predictor_layers=cell["predictor_layers"],
         predictor_bottleneck_dim=cell["predictor_bottleneck_dim"],
         predictor_lr_multiplier=cell["predictor_lr_multiplier"],
@@ -261,6 +261,7 @@ def gpu_worker(gpu_id: str, cells: list[dict], out_root: Path, csv_path: Path,
             w_jepa=cell["w_jepa"],
             predictor_lr_multiplier=cell["predictor_lr_multiplier"],
             align_layer=cell["align_layer"],
+            predictor_type=cell.get("predictor_type", "mlp"),
             predictor_layers=cell["predictor_layers"],
             predictor_bottleneck_dim=cell["predictor_bottleneck_dim"],
             train_status="skip", train_seconds=0.0,
