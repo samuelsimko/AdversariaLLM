@@ -143,6 +143,9 @@ def reuse_completed_stage(
     return None
 
 
+_LIST_RANGE_RE = re.compile(r"^\s*list\(\s*range\(\s*(-?\d+)\s*(?:,\s*(-?\d+)\s*(?:,\s*(-?\d+)\s*)?)?\)\s*\)\s*$")
+
+
 def hydra_value(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -150,6 +153,13 @@ def hydra_value(value: Any) -> str:
         return "null"
     if isinstance(value, (int, float)):
         return str(value)
+    if isinstance(value, str):
+        m = _LIST_RANGE_RE.match(value)
+        if m:
+            a, b, c = m.groups()
+            args = [int(a)] + ([int(b)] if b is not None else []) + ([int(c)] if c is not None else [])
+            expanded = list(range(*args))
+            return "[" + ",".join(str(i) for i in expanded) + "]"
     return json.dumps(value)
 
 
@@ -490,6 +500,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="Experiment YAML or legacy JSON")
     parser.add_argument("--backend", choices=["local", "slurm", "mock", "local_gpu"], default="local")
+    parser.add_argument(
+        "--extend-idx",
+        action="store_true",
+        help=(
+            "Re-submit attack stages even if their stage_dir already has READY. "
+            "The per-idx dedup inside run_attacks.py (filter_config + SQLite) will "
+            "skip behaviors already completed, so only the *new* idx values are run. "
+            "Use this to incrementally extend N=25 → N=50 → N=100 in the same "
+            "stage_dir without redoing prior behaviors."
+        ),
+    )
     args = parser.parse_args()
 
     cfg = load_experiment_config(args.config)
@@ -659,6 +680,15 @@ def main():
 
     print("Training jobs submitted.")
 
+    # Attack-priority ordering: enqueue all attack jobs across pipelines in
+    # the order specified by runtime.attack_priority (defaults to YAML order).
+    # All workers pull from one FIFO queue, so submitting attacks of priority
+    # 0 first means they all run before any priority-1 attack starts. We
+    # collect attack stages here and submit them at the end of the main loop.
+    attack_priority: list[str] = list(runtime.get("attack_priority", []))
+
+    pending_attacks: list[dict[str, Any]] = []  # holds args for delayed attack submission
+
     for pipeline_name, pipeline in pipelines.items():
         if pipeline_name not in run_pipelines:
             continue
@@ -695,13 +725,23 @@ def main():
                         hydra_launcher=hydra_launcher,
                     )
                     if is_stage_done(attack_stage_dir, fingerprint):
-                        print(f"Skipping attack {attack_name} for {defense_name} (already completed)")
-                        continue
-                    reused_from = reuse_completed_stage(
-                        stage_dir=attack_stage_dir,
-                        fingerprint=fingerprint,
-                        completed_stage_index=completed_stage_index,
-                    )
+                        if args.extend_idx:
+                            print(f"--extend-idx: re-submitting attack {attack_name} for {defense_name} (idx-level dedup will skip done behaviors)")
+                            # Clear READY so the orchestrator considers the stage in-flight again.
+                            ready_path = attack_stage_dir / "READY"
+                            if ready_path.exists():
+                                ready_path.unlink()
+                        else:
+                            print(f"Skipping attack {attack_name} for {defense_name} (already completed)")
+                            continue
+                    if not args.extend_idx:
+                        reused_from = reuse_completed_stage(
+                            stage_dir=attack_stage_dir,
+                            fingerprint=fingerprint,
+                            completed_stage_index=completed_stage_index,
+                        )
+                    else:
+                        reused_from = None
                     if reused_from is not None:
                         print(f"Reused completed attack {attack_name} for {defense_name} from {reused_from}")
                         append_submission_record(
@@ -733,30 +773,18 @@ def main():
                     )
                     stdout_log = logs_dir / f"{job_name}.out"
                     stderr_log = logs_dir / f"{job_name}.err"
-                    job_id = backend.submit(
-                        name=job_name,
-                        command=wrapped,
-                        time=get_time(cluster, "attack", "05:00:00"),
-                        output_log=str(stdout_log),
-                        error_log=str(stderr_log),
-                        depends_on=deps,
-                    )
-                    append_submission_record(
-                        jobs_path,
-                        {
-                            "job_id": job_id,
-                            "job_name": job_name,
-                            "stage": "attack",
-                            "pipeline": pipeline_name,
-                            "defense": defense_name,
-                            "attack": attack_name,
-                            "stage_dir": str(attack_stage_dir),
-                            "stdout_log": str(stdout_log),
-                            "stderr_log": str(stderr_log),
-                            "depends_on": deps,
-                            "fingerprint_hash": stable_hash(fingerprint),
-                        },
-                    )
+                    pending_attacks.append({
+                        "attack_name": attack_name,
+                        "pipeline_name": pipeline_name,
+                        "defense_name": defense_name,
+                        "job_name": job_name,
+                        "wrapped": wrapped,
+                        "stdout_log": stdout_log,
+                        "stderr_log": stderr_log,
+                        "deps": deps,
+                        "stage_dir": attack_stage_dir,
+                        "fingerprint": fingerprint,
+                    })
             elif stage == "benign_eval":
                 benign_name = step["benign_eval"]
                 bcfg = benign_evals[benign_name]
@@ -864,6 +892,45 @@ def main():
                 )
             else:
                 raise ValueError(f"Unknown pipeline stage: {stage}")
+
+    # Submit attack jobs in priority order (across all pipelines).
+    if pending_attacks:
+        def _attack_sort_key(p):
+            try:
+                pri = attack_priority.index(p["attack_name"])
+            except ValueError:
+                pri = len(attack_priority)  # unlisted attacks last
+            return (pri, p["pipeline_name"], p["defense_name"])
+        pending_attacks.sort(key=_attack_sort_key)
+        if attack_priority:
+            ordered = [p["attack_name"] for p in pending_attacks]
+            print(f"Submitting {len(pending_attacks)} attack jobs in priority order: {attack_priority} -> "
+                  f"first 6={ordered[:6]} ... last 3={ordered[-3:]}")
+        for p in pending_attacks:
+            job_id = backend.submit(
+                name=p["job_name"],
+                command=p["wrapped"],
+                time=get_time(cluster, "attack", "05:00:00"),
+                output_log=str(p["stdout_log"]),
+                error_log=str(p["stderr_log"]),
+                depends_on=p["deps"],
+            )
+            append_submission_record(
+                jobs_path,
+                {
+                    "job_id": job_id,
+                    "job_name": p["job_name"],
+                    "stage": "attack",
+                    "pipeline": p["pipeline_name"],
+                    "defense": p["defense_name"],
+                    "attack": p["attack_name"],
+                    "stage_dir": str(p["stage_dir"]),
+                    "stdout_log": str(p["stdout_log"]),
+                    "stderr_log": str(p["stderr_log"]),
+                    "depends_on": p["deps"],
+                    "fingerprint_hash": stable_hash(p["fingerprint"]),
+                },
+            )
 
     print("Experiment submission complete.")
     if args.backend == "local_gpu":

@@ -161,6 +161,19 @@ def tokenize_jepa_pairs(
         clean_last_idx = clean_prompt_tokens.shape[-1] - 1
         clean_pad = max_length - clean_prompt_tokens.shape[-1]
 
+        # End-of-prompt index in the adv-side full conversation: where the assistant
+        # response starts. Used by jepa_target='prompt_only' to mask out response
+        # positions when computing the predictor loss.
+        adv_prompt_only = tokenizer.apply_chat_template(
+            [{"role": "user", "content": adv_prompt}],
+            tokenize=True,
+            return_tensors="pt",
+            truncation=True,
+            max_length=max_length,
+            add_generation_prompt=True,
+        )
+        adv_prompt_end_idx = min(_chat_template_input_ids(adv_prompt_only).shape[-1], adv_full.shape[-1])
+
         out.append(
             {
                 "adv_input_ids": F.pad(adv_full, (0, adv_pad), value=tokenizer.pad_token_id).squeeze(0),
@@ -168,6 +181,7 @@ def tokenize_jepa_pairs(
                 "clean_input_ids": F.pad(clean_prompt_tokens, (0, clean_pad), value=tokenizer.pad_token_id).squeeze(0),
                 "clean_attention_mask": F.pad(torch.ones_like(clean_prompt_tokens), (0, clean_pad), value=0).squeeze(0),
                 "clean_last_idx": torch.tensor(clean_last_idx, dtype=torch.long),
+                "adv_prompt_end_idx": torch.tensor(adv_prompt_end_idx, dtype=torch.long),
                 "intent": torch.tensor(1 if intent == "harmful" else 0, dtype=torch.long),
             }
         )
@@ -569,10 +583,34 @@ class CEFloorRegularizer(HarmRegularizer):
 class CircuitBreakerRegularizer(HarmRegularizer):
     name = "circuit_breaker"
 
-    def __init__(self, rep_layers: List[int], alpha: float, beta: float):
+    def __init__(self, rep_layers: List[int], alpha: float, beta: float,
+                 beta_start_mult: float = 1.0, beta_decay_fraction: float = 1.0):
+        """beta_start_mult > 1 means the harmful-break term starts (start_mult × beta)
+        and decays via cosine to (1.0 × beta) over (beta_decay_fraction × max_steps).
+        Default beta_start_mult=1.0 disables the schedule (constant beta)."""
+        import math
+        self._math = math
         self.rep_layers = rep_layers
         self.alpha = alpha
         self.beta = beta
+        self.beta_start_mult = beta_start_mult
+        self.beta_decay_fraction = beta_decay_fraction
+        self._step = 0
+        self._max_steps = 1
+
+    def set_step(self, step: int, max_steps: int) -> None:
+        self._step = int(step)
+        self._max_steps = max(1, int(max_steps))
+
+    def _current_beta_mult(self) -> float:
+        if self.beta_start_mult <= 1.0:
+            return 1.0
+        denom = max(1.0, self._max_steps * self.beta_decay_fraction)
+        progress = min(1.0, self._step / denom)
+        # cosine decay: schedule in [0, 1] with schedule(0)=1, schedule(1)=0
+        schedule = 0.5 * (1.0 + self._math.cos(self._math.pi * progress))
+        # mult in [1.0, beta_start_mult]; starts at beta_start_mult, ends at 1.0
+        return 1.0 + (self.beta_start_mult - 1.0) * schedule
 
     def __call__(self, *, model, benign_inputs, harmful_inputs, benign_out, harmful_out):
         with no_adapter(model), torch.no_grad():
@@ -586,10 +624,12 @@ class CircuitBreakerRegularizer(HarmRegularizer):
 
         benign_anchor = F.mse_loss(h_b.float(), h_b_base.float())
         harmful_break = F.relu(F.cosine_similarity(h_h.float(), h_h_base.float(), dim=-1)).mean()
-        loss = self.alpha * benign_anchor + self.beta * harmful_break
+        beta_mult = self._current_beta_mult()
+        loss = self.alpha * benign_anchor + (self.beta * beta_mult) * harmful_break
         return loss, {
             "loss/cb_benign_l2": benign_anchor.detach(),
             "loss/cb_harmful_relu_cos": harmful_break.detach(),
+            "loss/cb_beta_mult": torch.tensor(beta_mult),
         }
 
 
@@ -624,7 +664,11 @@ def build_harm_regularizer(args, rep_layers: List[int]) -> HarmRegularizer:
     if args.harm_regularizer == "ce_floor":
         return CEFloorRegularizer(args.harm_ce_min)
     if args.harm_regularizer == "circuit_breaker":
-        return CircuitBreakerRegularizer(rep_layers, args.cb_alpha, args.cb_beta)
+        return CircuitBreakerRegularizer(
+            rep_layers, args.cb_alpha, args.cb_beta,
+            beta_start_mult=getattr(args, "cb_beta_start_mult", 1.0),
+            beta_decay_fraction=getattr(args, "cb_beta_decay_fraction", 1.0),
+        )
     if args.harm_regularizer == "triplet":
         return TripletRegularizer(rep_layers, args.triplet_harmful_pull_weight, args.triplet_benign_push_weight, args.triplet_margin)
     raise ValueError(f"Unknown harm_regularizer: {args.harm_regularizer}")
@@ -724,6 +768,8 @@ class JEPACETrainer(Trainer):
         w_kl: float,
         w_jepa: float,
         jepa_target_encoder: str,
+        jepa_target: str,
+        predictor_lr_multiplier: float,
         align_layer: int,
         seed: int,
         *args,
@@ -740,8 +786,51 @@ class JEPACETrainer(Trainer):
         self.w_kl = w_kl
         self.w_jepa = w_jepa
         self.jepa_target_encoder = jepa_target_encoder
+        self.jepa_target = jepa_target
+        self.predictor_lr_multiplier = predictor_lr_multiplier
         self.align_layer = align_layer
         self.seed = seed
+
+    def create_optimizer(self):
+        """Override to put predictor params in their own group with predictor_lr_multiplier × base lr.
+        Without this the cosine-normalized JEPA loss generates vanishingly small gradients on the
+        predictor, leaving its weights essentially at random init while only the LoRA adapts."""
+        if self.optimizer is not None:
+            return self.optimizer
+        from torch.optim import AdamW
+        opt_model = self.model
+        decay_names = self.get_decay_parameter_names(opt_model)
+        named = list(opt_model.named_parameters())
+        base_lr = float(self.args.learning_rate)
+        wd = float(self.args.weight_decay)
+        pred_lr = base_lr * float(self.predictor_lr_multiplier)
+        groups = [
+            # base LR groups (LoRA + everything except predictor)
+            {"params": [p for n, p in named
+                        if p.requires_grad and "jepa_predictor" not in n and n in decay_names],
+             "weight_decay": wd, "lr": base_lr, "_name": "base_decay"},
+            {"params": [p for n, p in named
+                        if p.requires_grad and "jepa_predictor" not in n and n not in decay_names],
+             "weight_decay": 0.0, "lr": base_lr, "_name": "base_nodecay"},
+            # predictor groups (separate higher LR)
+            {"params": [p for n, p in named
+                        if p.requires_grad and "jepa_predictor" in n and n in decay_names],
+             "weight_decay": wd, "lr": pred_lr, "_name": "pred_decay"},
+            {"params": [p for n, p in named
+                        if p.requires_grad and "jepa_predictor" in n and n not in decay_names],
+             "weight_decay": 0.0, "lr": pred_lr, "_name": "pred_nodecay"},
+        ]
+        groups = [g for g in groups if len(g["params"]) > 0]
+        for g in groups:
+            n_params = sum(p.numel() for p in g["params"])
+            print(f"[optim] group {g.pop('_name')}: {len(g['params'])} tensors ({n_params:,} params), lr={g['lr']:.2e}, wd={g['weight_decay']}")
+        optim_cls, optim_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args, opt_model)
+        # Force AdamW (the cls returned matches that path with default optim setting)
+        # Pop lr/wd from optim_kwargs since per-group lr/wd take precedence.
+        optim_kwargs.pop("lr", None)
+        optim_kwargs.pop("weight_decay", None)
+        self.optimizer = optim_cls(groups, **optim_kwargs)
+        return self.optimizer
 
     def get_train_dataloader(self):
         batch_size = self.args.per_device_train_batch_size
@@ -772,6 +861,9 @@ class JEPACETrainer(Trainer):
         clean_ids = pair_batch["clean_input_ids"].to(device)
         clean_mask = pair_batch["clean_attention_mask"].to(device)
         clean_last_idx = pair_batch["clean_last_idx"].to(device)
+        adv_prompt_end_idx = pair_batch.get("adv_prompt_end_idx", None)
+        if adv_prompt_end_idx is not None:
+            adv_prompt_end_idx = adv_prompt_end_idx.to(device)
 
         adv_out = model(
             input_ids=adv_ids,
@@ -813,6 +905,13 @@ class JEPACETrainer(Trainer):
         sims = (pred * target.unsqueeze(1)).sum(dim=-1)
         token_loss = 1.0 - sims
         mask = adv_mask.to(dtype=token_loss.dtype)
+        # If jepa_target=='prompt_only' AND we have the per-row adv prompt end index,
+        # restrict the loss to positions BEFORE the assistant response begins.
+        if getattr(self, "jepa_target", "with_response") == "prompt_only" and adv_prompt_end_idx is not None:
+            B, T = mask.shape
+            pos = torch.arange(T, device=device).unsqueeze(0).expand(B, T)
+            prompt_only_mask = (pos < adv_prompt_end_idx.unsqueeze(1)).to(dtype=mask.dtype)
+            mask = mask * prompt_only_mask
         return (token_loss * mask).sum() / mask.sum().clamp(min=1.0)
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
@@ -844,6 +943,13 @@ class JEPACETrainer(Trainer):
         harm_loss = torch.zeros((), device=device)
         harm_logs: Dict[str, torch.Tensor] = {}
         if self.w_harm > 0.0 and self.train_mode != "predictor_only":
+            # If the regularizer supports a step-aware schedule (e.g. circuit_breaker beta decay),
+            # tell it the current global step + max_steps before evaluation.
+            if hasattr(self.harm_regularizer, "set_step"):
+                self.harm_regularizer.set_step(
+                    int(self.state.global_step),
+                    int(self.args.max_steps if self.args.max_steps and self.args.max_steps > 0 else 1),
+                )
             harm_loss, harm_logs = self.harm_regularizer(
                 model=model,
                 benign_inputs=benign_inputs,
@@ -914,9 +1020,23 @@ def main():
     parser.add_argument("--w_kl", type=float, default=DEFAULT_W_KL)
     parser.add_argument("--w_jepa", type=float, default=DEFAULT_W_JEPA)
     parser.add_argument("--jepa_target_encoder", type=str, default="base", choices=["base", "defended"])
+    parser.add_argument("--jepa_target", type=str, default="with_response",
+                        choices=["with_response", "prompt_only"],
+                        help="prompt_only: JEPA loss only over adv prompt positions; "
+                             "with_response: include adv response positions (current default)")
+    parser.add_argument("--predictor_lr_multiplier", type=float, default=1.0,
+                        help="Multiply predictor's learning rate by this factor. "
+                             "Recommended: 100.0 to compensate for cosine-normalized loss "
+                             "shrinking predictor gradients.")
     parser.add_argument("--rep_layers", type=str, default=None)
     parser.add_argument("--cb_alpha", type=float, default=1.0)
     parser.add_argument("--cb_beta", type=float, default=1.0)
+    parser.add_argument("--cb_beta_start_mult", type=float, default=1.0,
+                        help="At step 0 the harmful-break term is (cb_beta * cb_beta_start_mult). "
+                             "Cosine-decays back to cb_beta over (cb_beta_decay_fraction × max_steps). "
+                             "Default 1.0 = constant (disabled). Recommended: 10.0 for early-emphasis.")
+    parser.add_argument("--cb_beta_decay_fraction", type=float, default=1.0,
+                        help="Fraction of max_steps over which the start-mult cosine-decays to 1.0.")
     parser.add_argument("--triplet_harmful_pull_weight", type=float, default=1.0)
     parser.add_argument("--triplet_benign_push_weight", type=float, default=1.0)
     parser.add_argument("--triplet_margin", type=float, default=0.2)
@@ -1092,6 +1212,8 @@ def main():
         w_harm=args.w_harm,
         w_kl=args.w_kl,
         w_jepa=args.w_jepa,
+        jepa_target=args.jepa_target,
+        predictor_lr_multiplier=args.predictor_lr_multiplier,
         jepa_target_encoder=args.jepa_target_encoder,
         align_layer=args.align_layer,
         seed=args.seed,

@@ -72,8 +72,9 @@ def main():
     # ------------------------------------------------------------
     # Build lm-eval command
     # ------------------------------------------------------------
+    import sys
     cmd = [
-        "lm_eval",
+        sys.executable, "-m", "lm_eval",
         "--model", "hf",
         "--model_args", model_args_str,
         "--device", args.device,

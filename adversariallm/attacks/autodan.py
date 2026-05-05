@@ -21,6 +21,12 @@ from omegaconf import DictConfig
 from tqdm import trange
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
+try:
+    from peft import PeftModel
+    _HF_MODEL_TYPES: tuple = (PreTrainedModel, PeftModel)
+except ImportError:
+    _HF_MODEL_TYPES = (PreTrainedModel,)
+
 from .attack import (Attack, AttackResult, AttackStepResult, GenerationConfig,
                      SingleAttackRunResult)
 from ..io_utils import load_model_and_tokenizer
@@ -337,16 +343,19 @@ class AutoDANAttack(Attack):
 
 
 class HuggingFace:
-    def __init__(self, model_or_model_path: str | PreTrainedModel, tokenizer: PreTrainedTokenizerBase | None = None, config: DictConfig | dict | None = None):
+    def __init__(self, model_or_model_path, tokenizer: PreTrainedTokenizerBase | None = None, config: DictConfig | dict | None = None):
         if isinstance(model_or_model_path, str):
             if config is None:
                 raise ValueError("config must be provided if model_or_model_path is a string")
             self.model, self.tokenizer = load_model_and_tokenizer(config)
-        elif isinstance(model_or_model_path, PreTrainedModel) and tokenizer is not None:
+        elif isinstance(model_or_model_path, _HF_MODEL_TYPES) and tokenizer is not None:
             self.model = model_or_model_path
             self.tokenizer = tokenizer
         else:
-            raise ValueError("model_or_model_path must be a string or a PreTrainedModel instance with a tokenizer must be provided")
+            raise ValueError(
+                "model_or_model_path must be a string, PreTrainedModel, or PeftModel "
+                "(with a tokenizer also provided)"
+            )
 
         self.eos_token_ids = [self.tokenizer.eos_token_id]
 

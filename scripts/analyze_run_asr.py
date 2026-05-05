@@ -315,6 +315,7 @@ def summarize_run(
     classifiers: set[str] | None,
     metric_overrides: dict[str, str],
     threshold: float,
+    include_details: bool = False,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     payload = load_json(run_file)
     config = payload.get("config", {})
@@ -347,48 +348,52 @@ def summarize_run(
         cutoff = success_cutoff(entry["metric"], threshold)
         n_success = sum(value > cutoff for value in values)
         behavior_success = bool(values) and max(values) > cutoff
-        behavior_steps = []
-        for subrun in original_prompts:
-            for step in subrun.get("steps", []):
-                score_dict = step.get("scores", {}).get(score_key)
-                if not isinstance(score_dict, dict):
-                    continue
-                metric = choose_metric(score_key, score_dict, metric_overrides)
-                if metric != entry["metric"]:
-                    continue
-                metric_values = synthetic_metric_values(score_dict, metric)
-                if metric_values is None:
-                    continue
-                numeric_metric_values = [coerce_score(value) for value in metric_values]
-                step_max_score = max(
-                    (value for value in numeric_metric_values if value is not None),
-                    default=None,
-                )
-                behavior_steps.append(
-                    {
-                        "step": step.get("step"),
-                        "prompt": step.get("model_input"),
-                        "completion": step.get("model_completions"),
-                        "scores": score_dict,
-                        "metric": metric,
-                        "success_cutoff": cutoff,
-                        "metric_values": numeric_metric_values,
-                        "max_score": step_max_score,
-                        "step_success": step_max_score is not None and step_max_score > cutoff,
-                    }
-                )
-        behavior_details = {
-            "run_file": str(run_file),
-            "config": config,
-            "original_prompt": [subrun.get("original_prompt") for subrun in original_prompts],
-            "steps": behavior_steps,
-            "behavior_success": behavior_success,
-        }
+        behavior_details = None
+        if include_details:
+            behavior_steps = []
+            for subrun in original_prompts:
+                for step in subrun.get("steps", []):
+                    score_dict = step.get("scores", {}).get(score_key)
+                    if not isinstance(score_dict, dict):
+                        continue
+                    metric = choose_metric(score_key, score_dict, metric_overrides)
+                    if metric != entry["metric"]:
+                        continue
+                    metric_values = synthetic_metric_values(score_dict, metric)
+                    if metric_values is None:
+                        continue
+                    numeric_metric_values = [coerce_score(value) for value in metric_values]
+                    step_max_score = max(
+                        (value for value in numeric_metric_values if value is not None),
+                        default=None,
+                    )
+                    behavior_steps.append(
+                        {
+                            "step": step.get("step"),
+                            "prompt": step.get("model_input"),
+                            "completion": step.get("model_completions"),
+                            "scores": score_dict,
+                            "metric": metric,
+                            "success_cutoff": cutoff,
+                            "metric_values": numeric_metric_values,
+                            "max_score": step_max_score,
+                            "step_success": step_max_score is not None and step_max_score > cutoff,
+                        }
+                    )
+            behavior_details = {
+                "run_file": str(run_file),
+                "config": config,
+                "original_prompt": [subrun.get("original_prompt") for subrun in original_prompts],
+                "steps": behavior_steps,
+                "behavior_success": behavior_success,
+            }
         run_summary[score_key] = {
             "metric": entry["metric"],
             "n_scored_completions": n_scored,
             "n_successful_completions": n_success,
             "completion_asr": (n_success / n_scored) if n_scored else None,
+            "score_sum": sum(values) if values else 0.0,
+            "mean_score": (sum(values) / n_scored) if n_scored else None,
             "max_score": max(values) if values else None,
             "success_cutoff": cutoff,
             "behavior_success": behavior_success,
@@ -402,6 +407,7 @@ def finalize_classifier_entries(entries: dict[str, dict[str, Any]]) -> list[dict
     for score_key, entry in sorted(entries.items()):
         n_behaviors = entry["n_run_files_with_classifier"]
         n_completions = entry["n_scored_completions"]
+        score_sum = entry.get("score_sum", 0.0)
         rows.append(
             {
                 "classifier": entry.get("classifier_label", score_key),
@@ -412,6 +418,7 @@ def finalize_classifier_entries(entries: dict[str, dict[str, Any]]) -> list[dict
                 "n_scored_completions": n_completions,
                 "n_successful_completions": entry["n_successful_completions"],
                 "completion_asr": entry["n_successful_completions"] / n_completions if n_completions else None,
+                "mean_score": (score_sum / n_completions) if n_completions else None,
                 "successful_behaviors": entry.get("successful_behaviors", []),
                 "unsuccessful_behaviors": entry.get("unsuccessful_behaviors", []),
             }
@@ -432,6 +439,7 @@ def aggregate_metric_variant_rows(
                 "n_successful_behaviors": 0,
                 "n_scored_completions": 0,
                 "n_successful_completions": 0,
+                "score_sum": 0.0,
             }
         )
     )
@@ -462,6 +470,7 @@ def aggregate_metric_variant_rows(
                         cutoff = success_cutoff(metric, threshold)
                         entry["n_scored_completions"] += len(numeric_values)
                         entry["n_successful_completions"] += sum(value > cutoff for value in numeric_values)
+                        entry["score_sum"] += sum(numeric_values)
                         entry["n_successful_behaviors"] += int(max(numeric_values) > cutoff)
 
     return {
@@ -486,6 +495,7 @@ def aggregate(
     group_by: str,
     classifiers: set[str] | None,
     metric_overrides: dict[str, str],
+    include_details: bool = False,
 ) -> dict[str, Any]:
     overall: dict[str, dict[str, Any]] = defaultdict(
         lambda: {
@@ -494,6 +504,7 @@ def aggregate(
             "n_successful_behaviors": 0,
             "n_scored_completions": 0,
             "n_successful_completions": 0,
+            "score_sum": 0.0,
             "successful_behaviors": [],
             "unsuccessful_behaviors": [],
         }
@@ -506,6 +517,7 @@ def aggregate(
                 "n_successful_behaviors": 0,
                 "n_scored_completions": 0,
                 "n_successful_completions": 0,
+                "score_sum": 0.0,
                 "successful_behaviors": [],
                 "unsuccessful_behaviors": [],
             }
@@ -518,6 +530,7 @@ def aggregate(
             classifiers=classifiers,
             metric_overrides=metric_overrides,
             threshold=threshold,
+            include_details=include_details,
         )
         group_name = group_value(config, group_by)
         for score_key, stats in run_summary.items():
@@ -527,6 +540,7 @@ def aggregate(
             overall_entry["n_successful_behaviors"] += int(stats["behavior_success"])
             overall_entry["n_scored_completions"] += stats["n_scored_completions"]
             overall_entry["n_successful_completions"] += stats["n_successful_completions"]
+            overall_entry["score_sum"] += stats.get("score_sum", 0.0)
             if stats.get("behavior_details") is not None:
                 bucket = "successful_behaviors" if stats["behavior_success"] else "unsuccessful_behaviors"
                 overall_entry[bucket].append(stats["behavior_details"])
@@ -537,6 +551,7 @@ def aggregate(
             grouped_entry["n_successful_behaviors"] += int(stats["behavior_success"])
             grouped_entry["n_scored_completions"] += stats["n_scored_completions"]
             grouped_entry["n_successful_completions"] += stats["n_successful_completions"]
+            grouped_entry["score_sum"] += stats.get("score_sum", 0.0)
             if stats.get("behavior_details") is not None:
                 bucket = "successful_behaviors" if stats["behavior_success"] else "unsuccessful_behaviors"
                 grouped_entry[bucket].append(stats["behavior_details"])
@@ -596,6 +611,7 @@ def summarize_attack_stage(
     threshold: float,
     classifiers: set[str] | None,
     metric_overrides: dict[str, str],
+    include_details: bool = False,
 ) -> dict[str, Any]:
     stage_dir = Path(job["stage_dir"])
     status_payload = status_payload_for_stage(stage_dir)
@@ -606,6 +622,7 @@ def summarize_attack_stage(
         group_by="none",
         classifiers=classifiers,
         metric_overrides=metric_overrides,
+        include_details=include_details,
     )
     return {
         "stage_dir": str(stage_dir),
@@ -793,6 +810,7 @@ def analyze_experiment(
     threshold: float,
     classifiers: set[str] | None,
     metric_overrides: dict[str, str],
+    include_details: bool = False,
 ) -> dict[str, Any]:
     submission_manifest = load_json(experiment_dir / "submission_manifest.json") if (experiment_dir / "submission_manifest.json").exists() else {}
     jobs = load_jobs_by_stage_dir(experiment_dir)
@@ -806,7 +824,7 @@ def analyze_experiment(
         stage_dir = Path(job["stage_dir"])
         stage_status_counter[stage_status_value(status_payload_for_stage(stage_dir))] += 1
         if stage == "attack":
-            attack_stages.append(summarize_attack_stage(job, threshold, classifiers, metric_overrides))
+            attack_stages.append(summarize_attack_stage(job, threshold, classifiers, metric_overrides, include_details=include_details))
         elif stage == "benign_eval":
             benign_stages.append(summarize_benign_stage(job))
         elif stage == "train":
@@ -1106,6 +1124,14 @@ def format_conversation(value: Any) -> str:
     return str(value)
 
 
+def extract_user_content(conversation: Any) -> str:
+    """Pull the (last) user-role content from a conversation message list."""
+    if not isinstance(conversation, list):
+        return str(conversation) if conversation else ""
+    user_msgs = [m.get("content", "") for m in conversation if isinstance(m, dict) and m.get("role") == "user"]
+    return user_msgs[-1] if user_msgs else ""
+
+
 def print_behavior_details(
     title: str,
     details_by_classifier: dict[str, list[dict[str, Any]]],
@@ -1128,10 +1154,35 @@ def print_behavior_details(
                 f"model={config.get('model')} dataset={config.get('dataset')} attack={config.get('attack')}"
             )
             original_prompts = behavior.get("original_prompt", [])
+            original_user_text = ""
             for prompt_index, original_prompt in enumerate(original_prompts, start=1):
                 print(f"      original_prompt[{prompt_index}]:")
                 print(format_conversation(original_prompt))
+                if not original_user_text:
+                    original_user_text = extract_user_content(original_prompt)
             steps = behavior.get("steps", [])
+            # === JAILBREAK STRING SUMMARY (best step) ===
+            scored = [(s.get("max_score") if s.get("max_score") is not None else -1, s) for s in steps]
+            if scored:
+                best_score, best_step = max(scored, key=lambda x: x[0])
+                jailbreak_user = extract_user_content(best_step.get("prompt"))
+                print(f"      JAILBREAK STRING (best step, max_score={format_float(best_score)}):")
+                if jailbreak_user == original_user_text:
+                    print(f"        (unchanged from original — attack didn't modify the user prompt)")
+                else:
+                    # If the attack only appended/prepended, show the diff portion explicitly
+                    if original_user_text and original_user_text in jailbreak_user:
+                        added = jailbreak_user.replace(original_user_text, "<<ORIGINAL>>", 1)
+                        print(f"        diff (jailbreak with <<ORIGINAL>> placeholder):")
+                        print(f"          {added}")
+                    else:
+                        print(f"        full jailbreak user prompt:")
+                        print(f"          {jailbreak_user}")
+                # Also show the model's response on that best step
+                completions = best_step.get("completion") or []
+                if isinstance(completions, list) and completions:
+                    print(f"      JAILBREAK RESPONSE (best step):")
+                    print(f"        {completions[0]}")
             if only_matching_steps:
                 behavior_success = bool(behavior.get("behavior_success"))
                 steps = [step for step in steps if bool(step.get("step_success")) == behavior_success]
@@ -1261,6 +1312,7 @@ def main() -> int:
     target = resolve_target(args.target, args.experiment_root)
     classifiers = set(args.classifiers) if args.classifiers else None
     metric_overrides = parse_metric_overrides(args.metric_overrides)
+    include_details = bool(args.print_successful_behaviors or args.print_unsuccessful_behaviors)
 
     if is_experiment_dir(target):
         report = analyze_experiment(
@@ -1268,6 +1320,7 @@ def main() -> int:
             threshold=args.threshold,
             classifiers=classifiers,
             metric_overrides=metric_overrides,
+            include_details=include_details,
         )
         if args.json:
             print(json.dumps(report, indent=2))
@@ -1288,6 +1341,7 @@ def main() -> int:
         group_by=args.group_by,
         classifiers=classifiers,
         metric_overrides=metric_overrides,
+        include_details=include_details,
     )
     if args.json:
         print(json.dumps({"mode": "run_files", **report}, indent=2))

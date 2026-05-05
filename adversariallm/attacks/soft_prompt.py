@@ -50,6 +50,16 @@ class SoftPromptConfig:
     lr_log10_min: float = -4.0
     lr_log10_max: float = -1.0
 
+    # Discrete config pool. When random_config_per_prompt=True, each prompt
+    # index deterministically draws one entry from `config_pool`, overriding
+    # the static (lr, optim_str_init, early_stop_loss). Each entry is a dict
+    # with keys {"lr", "optim_str_init", "early_stop_loss"}. The init string
+    # is tokenized to determine num_tokens. num_steps stays at the static
+    # field (typically 1000 — early_stop terminates earlier when loss
+    # crosses the threshold). Seeded by randomize_seed + prompt_index.
+    random_config_per_prompt: bool = False
+    config_pool: list[dict[str, Any]] = field(default_factory=list)
+
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "SoftPromptConfig":
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
@@ -75,6 +85,26 @@ def derive_randomized_soft_prompt_params(
     num_steps = rng.randint(base_config.num_steps_min, base_config.num_steps_max)
     lr = 10.0 ** rng.uniform(base_config.lr_log10_min, base_config.lr_log10_max)
     return {"num_tokens": num_tokens, "num_steps": num_steps, "lr": lr}
+
+
+def pick_pool_config(
+    base_config: SoftPromptConfig,
+    prompt_index: int,
+) -> dict[str, Any]:
+    """Deterministically pick one entry from ``config_pool`` for this prompt.
+
+    Same RNG seed convention as ``derive_randomized_soft_prompt_params``: the
+    same prompt_index always picks the same pool entry across models/runs.
+    """
+    if not base_config.config_pool:
+        raise ValueError("random_config_per_prompt=True but config_pool is empty.")
+    rng = random.Random(int(base_config.randomize_seed) + int(prompt_index))
+    entry = dict(rng.choice(list(base_config.config_pool)))
+    # Sanity check required keys
+    for k in ("lr", "optim_str_init", "early_stop_loss"):
+        if k not in entry:
+            raise ValueError(f"config_pool entry missing key {k!r}: {entry}")
+    return entry
 
 
 @dataclass
@@ -128,9 +158,11 @@ def run_soft_opt(
         raise ValueError("Target tokenization is empty.")
 
     emb = model.get_input_embeddings()
-    before_embeds = emb(before_ids)
-    after_embeds = emb(after_ids)
-    target_embeds = emb(target_ids)
+    # Detach the fixed embeddings so backward through them doesn't try to
+    # walk back into the embedding-table's already-freed graph in iter 2+.
+    before_embeds = emb(before_ids).detach()
+    after_embeds = emb(after_ids).detach()
+    target_embeds = emb(target_ids).detach()
 
     if not config.rand_init:
         optim_ids = tokenizer(config.optim_str_init, return_tensors="pt", add_special_tokens=False)["input_ids"].to(device)
@@ -264,7 +296,28 @@ class SoftPromptAttack(Attack):
             # build a per-iteration override.
             iter_config = self.config
             randomized_meta: dict[str, Any] = {}
-            if self.config.randomize_per_prompt:
+            if self.config.random_config_per_prompt:
+                prompt_index = prompt_indices[iter_index]
+                pick = pick_pool_config(self.config, prompt_index)
+                iter_config = copy.copy(self.config)
+                iter_config.lr = float(pick["lr"])
+                iter_config.optim_str_init = str(pick["optim_str_init"])
+                iter_config.early_stop_loss = float(pick["early_stop_loss"])
+                iter_config.rand_init = False  # use the meaningful init string
+                randomized_meta = {
+                    "_pool_prompt_index": prompt_index,
+                    "_pool_lr": iter_config.lr,
+                    "_pool_optim_str_init": iter_config.optim_str_init,
+                    "_pool_early_stop_loss": iter_config.early_stop_loss,
+                }
+                logging.info(
+                    "[soft_prompt] prompt_index=%d POOL lr=%.5g early_stop=%.5g init=%r",
+                    prompt_index,
+                    iter_config.lr,
+                    iter_config.early_stop_loss,
+                    iter_config.optim_str_init,
+                )
+            elif self.config.randomize_per_prompt:
                 prompt_index = prompt_indices[iter_index]
                 draw = derive_randomized_soft_prompt_params(self.config, prompt_index)
                 iter_config = copy.copy(self.config)

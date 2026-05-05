@@ -158,6 +158,9 @@ def load_model_and_tokenizer(
             tokenizer.eos_token_id = 128009  # want to use <|eot_id|> instead of <|eos_id|>  (https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct/discussions/4)  # fmt: off
         case path if "grayswanai/llama-3-8b-instruct-rr" in path:
             tokenizer.eos_token_id = 128009  # want to use <|eot_id|> instead of <|eos_id|>  # fmt: off
+        case path if "samuelsimko/meta-llama-3-8b-instruct-triplet" in path:
+            tokenizer.model_max_length = 8192
+            tokenizer.eos_token_id = 128009
         case path if "nousresearch/hermes-2-pro-llama-3-8b" in path:
             tokenizer.model_max_length = 8192
         case path if "llm-lat/robust-llama3-8b-instruct" in path:

@@ -1,3 +1,6 @@
 [submodule "strong_reject"]
 	path = strong_reject
 	url = https://github.com/dsbowen/strong_reject.git
+[submodule "SafeSwitch"]
+	path = SafeSwitch
+	url = https://github.com/samuelsimko/SafeSwitch.git
