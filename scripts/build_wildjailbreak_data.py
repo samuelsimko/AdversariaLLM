@@ -1,74 +1,160 @@
-"""Build WildJailbreak-only training data files for PRA ablation.
+"""Build aligned WildJailbreak ↔ WildGuardMix training data for PRA (no confounder).
 
-Outputs:
-  data/wildjailbreak_harmful.json   — list of {prompt, output} for the harm regularizer.
-                                      Combines vanilla_harmful + adversarial_harmful (where
-                                      adversarial != "") rows; for adv_harmful rows we add
-                                      BOTH the adversarial and vanilla variants as separate
-                                      prompts (so harm CE sees both views).
-  data/wildjailbreak_benign.jsonl   — list of {prompt, response} for benign KL/CE
-                                      (replaces UltraChat). Same expansion logic.
-  data/wildjailbreak_pairs.jsonl    — paired rows (adversarial_harmful + adversarial_benign)
-                                      with the WJ schema {vanilla, adversarial, completion,
-                                      data_type}. Loaded by jepa_ce.py with
-                                      pair_format=wildjailbreak.
+The naive approach was to use WildGuardMix prompts/responses for harm CE and WildJailbreak
+pairs for the JEPA loss. But those are DIFFERENT prompt distributions — the harm CE was
+seeing prompts that pair JEPA never saw, and vice versa. That's a distribution confounder.
 
-Schema (from allenai/wildjailbreak, train config, delimiter=tsv):
-  - vanilla: base prompt (always present)
-  - adversarial: jailbreak rewrite (only present for adversarial_* rows)
-  - completion: model's response
-  - data_type: one of vanilla_harmful / vanilla_benign / adversarial_harmful / adversarial_benign
+Fix: only use rows where the WJ pair (vanilla, adversarial) has at least one prompt
+that ALSO appears in WildGuardMix's harmful-response (or compliance-response) map.
+That gives us aligned (vanilla, adversarial, real_harmful_response) triples — same
+prompt distribution for both losses.
+
+Output:
+  data/wildjailbreak_harmful.json   — list of {prompt, output} where prompt is one
+                                      of the WJ vanilla/adversarial harmful prompts
+                                      AND has a real harmful response in WildGuardMix.
+                                      ~5k entries.
+  data/wildjailbreak_benign.jsonl   — list of {prompt, response} where prompt is one
+                                      of the WJ vanilla/adversarial benign prompts
+                                      AND has a real compliance response in WildGuardMix.
+                                      ~9k entries.
+  data/wildjailbreak_pairs.jsonl    — ALL WJ adversarial_harmful + adversarial_benign
+                                      pairs (~161k). The completion field is the WJ
+                                      original (safe refusal for harmful, helpful for
+                                      benign). With include_pair_harmful_in_harm_ce=false
+                                      in the training config, the harmful pair completion
+                                      is unused (only prompt-pair JEPA matters).
+
+Filters on WG responses: drop chat-format-tag prefixes ([ASS], [USER], etc.) and
+responses < 200 chars (often degenerate "I'd be happy to help!").
 """
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 OUT_DIR = Path("data")
-HF_NAME = "allenai/wildjailbreak"
+WJ_NAME = "allenai/wildjailbreak"
+WG_NAME = "allenai/wildguardmix"
+BAD_PREFIXES = ("[", "USER:", "ASSISTANT:", "Assistant:", "User:")
+MIN_RESP_LEN = 200
+N_PER_POOL = 5000  # cap harmful and benign pools at this size each (balanced)
+SEED = 42
 
 
 def main() -> None:
     OUT_DIR.mkdir(exist_ok=True)
-    print(f"Loading {HF_NAME} ...")
     from datasets import load_dataset
-    ds = load_dataset(HF_NAME, "train", delimiter="\t", keep_default_na=False)["train"]
-    print(f"  total rows: {len(ds)}")
 
-    harmful_records = []
-    benign_records = []
-    pair_records = []
+    print(f"Loading {WG_NAME} (wildguardtrain) ...")
+    wg = load_dataset(WG_NAME, "wildguardtrain")["train"]
+    print(f"  total rows: {len(wg)}")
 
-    for r in ds:
+    # Build clean (prompt → response) maps from WildGuardMix
+    wg_harm = {}
+    wg_compl = {}
+    for r in wg:
+        prompt = (r.get("prompt") or "").strip()
+        resp = (r.get("response") or "").strip()
+        if not (prompt and resp):
+            continue
+        if any(resp.startswith(p) for p in BAD_PREFIXES) or len(resp) < MIN_RESP_LEN:
+            continue
+        if r.get("prompt_harm_label") == "harmful" and r.get("response_harm_label") == "harmful":
+            wg_harm.setdefault(prompt, resp)
+        elif (r.get("prompt_harm_label") == "unharmful"
+                and r.get("response_refusal_label") == "compliance"):
+            wg_compl.setdefault(prompt, resp)
+    print(f"  WG clean harmful map: {len(wg_harm)} entries")
+    print(f"  WG clean compliance map: {len(wg_compl)} entries")
+
+    print(f"\nLoading {WJ_NAME} (train) ...")
+    wj = load_dataset(WJ_NAME, "train", delimiter="\t", keep_default_na=False)["train"]
+    print(f"  total rows: {len(wj)}")
+
+    harmful_records = []  # list of {prompt, output}
+    benign_records = []   # list of {prompt, response}
+    pair_records = []     # list of {vanilla, adversarial, completion, data_type}
+
+    n_harm_aligned_van = n_harm_aligned_adv = 0
+    n_benign_aligned_van = n_benign_aligned_adv = 0
+
+    for r in wj:
         dt = r["data_type"]
         vanilla = (r["vanilla"] or "").strip()
         adversarial = (r["adversarial"] or "").strip()
         completion = (r["completion"] or "").strip()
-        if not completion:
+        if not (vanilla and adversarial and completion):
             continue
 
-        if dt == "vanilla_harmful" and vanilla:
-            harmful_records.append({"prompt": vanilla, "output": completion})
-        elif dt == "adversarial_harmful" and vanilla and adversarial:
-            harmful_records.append({"prompt": adversarial, "output": completion})
-            harmful_records.append({"prompt": vanilla,     "output": completion})
-            pair_records.append({
-                "vanilla": vanilla, "adversarial": adversarial,
-                "completion": completion, "data_type": dt,
-            })
-        elif dt == "vanilla_benign" and vanilla:
-            benign_records.append({"prompt": vanilla, "response": completion})
-        elif dt == "adversarial_benign" and vanilla and adversarial:
-            benign_records.append({"prompt": adversarial, "response": completion})
-            benign_records.append({"prompt": vanilla,     "response": completion})
+        if dt == "adversarial_harmful":
+            van_resp = wg_harm.get(vanilla)
+            adv_resp = wg_harm.get(adversarial)
+            if van_resp:
+                harmful_records.append({"prompt": vanilla, "output": van_resp})
+                n_harm_aligned_van += 1
+            if adv_resp:
+                harmful_records.append({"prompt": adversarial, "output": adv_resp})
+                n_harm_aligned_adv += 1
+            # Only include adversarial_harmful pair in the pair file if at least one
+            # of its prompts has an aligned real harmful response. For the completion
+            # field, prefer the adversarial-aligned response (matches the adv prompt's
+            # behaviour); fall back to the vanilla-aligned response.
+            aligned_resp = adv_resp or van_resp
+            if aligned_resp is not None:
+                pair_records.append({
+                    "vanilla": vanilla, "adversarial": adversarial,
+                    "completion": aligned_resp, "data_type": dt,
+                })
+
+        elif dt == "adversarial_benign":
+            van_resp = wg_compl.get(vanilla)
+            adv_resp = wg_compl.get(adversarial)
+            if van_resp:
+                benign_records.append({"prompt": vanilla, "response": van_resp})
+                n_benign_aligned_van += 1
+            if adv_resp:
+                benign_records.append({"prompt": adversarial, "response": adv_resp})
+                n_benign_aligned_adv += 1
             pair_records.append({
                 "vanilla": vanilla, "adversarial": adversarial,
                 "completion": completion, "data_type": dt,
             })
 
-    print(f"  harmful prompts (for harm regularizer): {len(harmful_records)}")
-    print(f"  benign  prompts (for KL preservation):  {len(benign_records)}")
-    print(f"  pair rows (for PRA JEPA loss):          {len(pair_records)}")
+    print(f"\n  Aligned harmful (prompt, real harmful response):")
+    print(f"    via WJ vanilla ∈ WG-harmful: {n_harm_aligned_van}")
+    print(f"    via WJ adversarial ∈ WG-harmful: {n_harm_aligned_adv}")
+    print(f"    total entries before cap: {len(harmful_records)}")
+
+    print(f"\n  Aligned benign (prompt, real compliance response):")
+    print(f"    via WJ vanilla ∈ WG-compl: {n_benign_aligned_van}")
+    print(f"    via WJ adversarial ∈ WG-compl: {n_benign_aligned_adv}")
+    print(f"    total entries before cap: {len(benign_records)}")
+
+    print(f"\n  WJ pair rows before cap: harmful={sum(1 for r in pair_records if r['data_type']=='adversarial_harmful')}, benign={sum(1 for r in pair_records if r['data_type']=='adversarial_benign')}")
+
+    # Cap each pool at N_PER_POOL with deterministic shuffle
+    rng = random.Random(SEED)
+    rng.shuffle(harmful_records)
+    rng.shuffle(benign_records)
+    harmful_records = harmful_records[:N_PER_POOL]
+    benign_records = benign_records[:N_PER_POOL]
+
+    # Cap pair pools separately (harmful and benign each capped at N_PER_POOL)
+    harmful_pairs = [r for r in pair_records if r["data_type"] == "adversarial_harmful"]
+    benign_pairs  = [r for r in pair_records if r["data_type"] == "adversarial_benign"]
+    rng.shuffle(harmful_pairs)
+    rng.shuffle(benign_pairs)
+    harmful_pairs = harmful_pairs[:N_PER_POOL]
+    benign_pairs  = benign_pairs[:N_PER_POOL]
+    pair_records = harmful_pairs + benign_pairs
+    rng.shuffle(pair_records)
+
+    print(f"\n  After capping at {N_PER_POOL} each:")
+    print(f"    wildjailbreak_harmful.json: {len(harmful_records)}")
+    print(f"    wildjailbreak_benign.jsonl: {len(benign_records)}")
+    print(f"    wildjailbreak_pairs.jsonl: {len(pair_records)} ({len(harmful_pairs)} harmful + {len(benign_pairs)} benign)")
 
     h_path = OUT_DIR / "wildjailbreak_harmful.json"
     with open(h_path, "w") as f:

@@ -3,7 +3,7 @@ meta:
   output_root: runs/experiments
 cluster: {}
 runtime:
-  num_gpus: 4
+  num_gpus: 6
   continue_on_attack_failure: true
 classifiers:
 - local:strongreject
@@ -52,7 +52,7 @@ common:
   w_benign: 0.1
   w_harm: 1.0
   w_kl: 1.0
-  include_pair_harmful_in_harm_ce: true
+  include_pair_harmful_in_harm_ce: false
 defenses:
   l_cb_pra_wj:
     script: defenses/jepa_ce.py
@@ -94,7 +94,7 @@ defenses:
       w_benign: 0.1
       w_harm: 1.0
       w_kl: 1.0
-      include_pair_harmful_in_harm_ce: true
+      include_pair_harmful_in_harm_ce: false
       harm_regularizer: circuit_breaker
       cb_beta_start_mult: 10.0
       cb_beta_decay_fraction: 1.0
@@ -139,7 +139,7 @@ defenses:
       w_benign: 0.1
       w_harm: 1.0
       w_kl: 1.0
-      include_pair_harmful_in_harm_ce: true
+      include_pair_harmful_in_harm_ce: false
       harm_regularizer: circuit_breaker
       cb_beta_start_mult: 10.0
       cb_beta_decay_fraction: 1.0
@@ -184,7 +184,7 @@ defenses:
       w_benign: 0.1
       w_harm: 1.0
       w_kl: 1.0
-      include_pair_harmful_in_harm_ce: true
+      include_pair_harmful_in_harm_ce: false
       harm_regularizer: triplet
       w_jepa: 5.0
   l_triplet_no_pra_wj:
@@ -227,7 +227,7 @@ defenses:
       w_benign: 0.1
       w_harm: 1.0
       w_kl: 1.0
-      include_pair_harmful_in_harm_ce: true
+      include_pair_harmful_in_harm_ce: false
       harm_regularizer: triplet
       w_jepa: 0.0
   l_ce_in_pra_wj:
@@ -270,7 +270,7 @@ defenses:
       w_benign: 0.1
       w_harm: 1.0
       w_kl: 1.0
-      include_pair_harmful_in_harm_ce: true
+      include_pair_harmful_in_harm_ce: false
       harm_regularizer: ce_floor
       harm_ce_min: 3.0
       w_jepa: 5.0
@@ -314,7 +314,7 @@ defenses:
       w_benign: 0.1
       w_harm: 1.0
       w_kl: 1.0
-      include_pair_harmful_in_harm_ce: true
+      include_pair_harmful_in_harm_ce: false
       harm_regularizer: ce_floor
       harm_ce_min: 3.0
       w_jepa: 0.0
@@ -358,7 +358,7 @@ defenses:
       w_benign: 0.1
       w_harm: 1.0
       w_kl: 1.0
-      include_pair_harmful_in_harm_ce: true
+      include_pair_harmful_in_harm_ce: false
       harm_regularizer: triplet
       w_jepa: 5.0
   q_triplet_no_pra_wj:
@@ -401,7 +401,7 @@ defenses:
       w_benign: 0.1
       w_harm: 1.0
       w_kl: 1.0
-      include_pair_harmful_in_harm_ce: true
+      include_pair_harmful_in_harm_ce: false
       harm_regularizer: triplet
       w_jepa: 0.0
   q_ce_in_pra_wj:
@@ -444,7 +444,7 @@ defenses:
       w_benign: 0.1
       w_harm: 1.0
       w_kl: 1.0
-      include_pair_harmful_in_harm_ce: true
+      include_pair_harmful_in_harm_ce: false
       harm_regularizer: ce_floor
       harm_ce_min: 3.0
       w_jepa: 5.0
@@ -488,7 +488,7 @@ defenses:
       w_benign: 0.1
       w_harm: 1.0
       w_kl: 1.0
-      include_pair_harmful_in_harm_ce: true
+      include_pair_harmful_in_harm_ce: false
       harm_regularizer: ce_floor
       harm_ce_min: 3.0
       w_jepa: 0.0
