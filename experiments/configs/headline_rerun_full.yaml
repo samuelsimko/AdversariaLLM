@@ -37,6 +37,7 @@ runtime:
     - or_bench_overrefusal
     - bon_50
     - inpainting_50
+    - pgd_25
 
 classifiers: ["local:strongreject"]
 
@@ -57,6 +58,11 @@ datasets:
     seed: 0
     shuffle: true
     idx: "list(range(0, 50))"
+  adv_behaviors_n25:
+    name: adv_behaviors
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 25))"
   jbb_behaviors_n50:
     name: jbb_behaviors
     seed: 0
@@ -394,6 +400,9 @@ attacks:
   inpainting_50:
     attack: inpainting
     dataset: jbb_behaviors_n50
+  pgd_25:
+    attack: pgd
+    dataset: adv_behaviors_n25
 
 # ---------------------- Benign evals ----------------------
 benign_evals:
@@ -428,56 +437,56 @@ pipelines:
     - { stage: train, defense: l_cb_pra }
     - stage: attack
       defense: l_cb_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: l_cb_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: l_cb_pra, benign_eval: mmlu_full }
   l_cb_no_pra:
     - { stage: train, defense: l_cb_no_pra }
     - stage: attack
       defense: l_cb_no_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: l_cb_no_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: l_cb_no_pra, benign_eval: mmlu_full }
   l_triplet_pra:
     - { stage: train, defense: l_triplet_pra }
     - stage: attack
       defense: l_triplet_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: l_triplet_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: l_triplet_pra, benign_eval: mmlu_full }
   l_triplet_no_pra:
     - { stage: train, defense: l_triplet_no_pra }
     - stage: attack
       defense: l_triplet_no_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: l_triplet_no_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: l_triplet_no_pra, benign_eval: mmlu_full }
   l_ce_in_pra:
     - { stage: train, defense: l_ce_in_pra }
     - stage: attack
       defense: l_ce_in_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: l_ce_in_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: l_ce_in_pra, benign_eval: mmlu_full }
   l_ce_in_no_pra:
     - { stage: train, defense: l_ce_in_no_pra }
     - stage: attack
       defense: l_ce_in_no_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: l_ce_in_no_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: l_ce_in_no_pra, benign_eval: mmlu_full }
   l_lat_pra:
     - { stage: train, defense: l_lat_pra }
     - stage: attack
       defense: l_lat_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: l_lat_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: l_lat_pra, benign_eval: mmlu_full }
   l_lat_no_pra:
     - { stage: train, defense: l_lat_no_pra }
     - stage: attack
       defense: l_lat_no_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: l_lat_no_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: l_lat_no_pra, benign_eval: mmlu_full }
 
@@ -485,56 +494,56 @@ pipelines:
     - { stage: train, defense: q_cb_pra }
     - stage: attack
       defense: q_cb_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: q_cb_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: q_cb_pra, benign_eval: mmlu_full }
   q_cb_no_pra:
     - { stage: train, defense: q_cb_no_pra }
     - stage: attack
       defense: q_cb_no_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: q_cb_no_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: q_cb_no_pra, benign_eval: mmlu_full }
   q_triplet_pra:
     - { stage: train, defense: q_triplet_pra }
     - stage: attack
       defense: q_triplet_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: q_triplet_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: q_triplet_pra, benign_eval: mmlu_full }
   q_triplet_no_pra:
     - { stage: train, defense: q_triplet_no_pra }
     - stage: attack
       defense: q_triplet_no_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: q_triplet_no_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: q_triplet_no_pra, benign_eval: mmlu_full }
   q_ce_in_pra:
     - { stage: train, defense: q_ce_in_pra }
     - stage: attack
       defense: q_ce_in_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: q_ce_in_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: q_ce_in_pra, benign_eval: mmlu_full }
   q_ce_in_no_pra:
     - { stage: train, defense: q_ce_in_no_pra }
     - stage: attack
       defense: q_ce_in_no_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: q_ce_in_no_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: q_ce_in_no_pra, benign_eval: mmlu_full }
   q_lat_pra:
     - { stage: train, defense: q_lat_pra }
     - stage: attack
       defense: q_lat_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: q_lat_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: q_lat_pra, benign_eval: mmlu_full }
   q_lat_no_pra:
     - { stage: train, defense: q_lat_no_pra }
     - stage: attack
       defense: q_lat_no_pra
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: q_lat_no_pra, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: q_lat_no_pra, benign_eval: mmlu_full }
 
@@ -542,24 +551,24 @@ pipelines:
   ref_grayswan_rr:
     - stage: attack
       defense: ref_grayswan_rr
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: ref_grayswan_rr, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: ref_grayswan_rr, benign_eval: mmlu_full }
   ref_simko_triplet:
     - stage: attack
       defense: ref_simko_triplet
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: ref_simko_triplet, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: ref_simko_triplet, benign_eval: mmlu_full }
   ref_lat_l:
     - stage: attack
       defense: ref_lat_l
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: ref_lat_l, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: ref_lat_l, benign_eval: mmlu_full }
   ref_dat_l:
     - stage: attack
       defense: ref_dat_l
-      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50]
+      attacks: [soft_prompt_100, direct_300, prefilling_300, human_jailbreaks_300, or_bench_overrefusal, bon_50, inpainting_50, pgd_25]
     - { stage: benign_eval, defense: ref_dat_l, benign_eval: gsm8k_200 }
     - { stage: benign_eval, defense: ref_dat_l, benign_eval: mmlu_full }
