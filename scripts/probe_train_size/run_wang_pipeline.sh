@@ -169,6 +169,14 @@ if [[ "${SKIP_CLASSIFY:-0}" != "1" ]]; then
   echo "=== CLASSIFY DONE ==="
 fi
 
+if [[ "${SKIP_COMBINED:-0}" != "1" ]]; then
+  echo "=== COMBINED-PAIR METRICS (linear + MLP, F1/FP on balanced halves) ==="
+  "$PYBIN" "$REPO/scripts/probe_train_size/combined_metrics_wang.py" \
+    --states_root "$WANG_ROOT" \
+    --out_csv "$REPO/assets/figures/probe_wang_faithful/combined_pair_metrics.csv"
+  echo "=== COMBINED-PAIR METRICS DONE ==="
+fi
+
 echo "=== TABLE ==="
 "$PYBIN" "$REPO/scripts/probe_train_size/build_wang_table.py"
 echo "=== ALL DONE ==="

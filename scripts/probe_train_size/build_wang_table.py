@@ -261,6 +261,47 @@ def main() -> None:
 
     md.append(md_section_pred_minus_raw(wide, fams))
 
+    # Combined-pair F1/FP metrics (linear vs MLP probe on balanced mal+benign halves)
+    pair_csv = args.in_dir.parent.parent / "probe_wang_faithful" / "combined_pair_metrics.csv"
+    # Try assets-side first (where combined_metrics_wang.py writes)
+    asset_pair_csv = args.out_dir / "combined_pair_metrics.csv"
+    if asset_pair_csv.exists():
+        pair_csv = asset_pair_csv
+    if pair_csv.exists():
+        cm = pd.read_csv(pair_csv)
+        md.append("## Combined-pair metrics (linear vs MLP probe on balanced mal+benign halves)")
+        md.append("")
+        md.append(
+            "Per attack family the SVM is evaluated on a balanced test set "
+            "(`malicious_<attack>` + `benign_<attack>`). Reports recall, "
+            "false-positive rate, and F1. Linear = `SVC(kernel='linear')`. "
+            "MLP = `MLPClassifier((512,128))` early-stopped."
+        )
+        md.append("")
+        for layer in [-1, 25]:
+            sub = cm[cm["layer"] == layer]
+            if sub.empty:
+                continue
+            md.append(f"### Layer {layer} — F1 per attack")
+            md.append("")
+            piv = sub.pivot_table(index=["cell", "probe"], columns="attack", values="f1").round(3)
+            md.append(piv.to_markdown())
+            md.append("")
+            md.append(f"### Layer {layer} — FP rate per attack (lower = less over-refusal)")
+            md.append("")
+            piv = sub.pivot_table(index=["cell", "probe"], columns="attack", values="fp_rate").round(3)
+            md.append(piv.to_markdown())
+            md.append("")
+            md.append(f"### Layer {layer} — Mean F1 + Mean FP, all 4 JEPA attacks")
+            md.append("")
+            agg = sub.groupby(["cell", "probe"]).agg(
+                mean_f1=("f1", "mean"),
+                mean_fp=("fp_rate", "mean"),
+                mean_recall=("mal_recall", "mean"),
+            ).round(3)
+            md.append(agg.to_markdown())
+            md.append("")
+
     md.append("## Full pivot")
     md.append("")
     md.append("```")
