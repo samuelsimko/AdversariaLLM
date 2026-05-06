@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=pra-{CELL}
+#SBATCH --account={ACCOUNT}
+#SBATCH --partition={PARTITION}
+#SBATCH --time={TIME}
+#SBATCH --exclusive
+#SBATCH --nodes=1
+#SBATCH --gpus-per-node={GPUS_PER_NODE}
+#SBATCH --ntasks-per-node=1
+#SBATCH --mem={MEM}
+#SBATCH --output={LOGS_DIR}/{CELL}.%j.out
+#SBATCH --error={LOGS_DIR}/{CELL}.%j.err
+
+set -euo pipefail
+
+# These placeholders are filled in by submit_all.sh:
+#   {CELL}          cell name (e.g. q_cb_pra)
+#   {ACCOUNT}       slurm account
+#   {PARTITION}     slurm partition
+#   {TIME}          wall-clock limit (HH:MM:SS)
+#   {GPUS_PER_NODE} number of GPUs per node
+#   {MEM}           memory in MB
+#   {LOGS_DIR}      slurm log directory
+#   {REPO_DIR}      AdversariaLLM checkout
+#   {CONFIG}        experiment YAML path (relative to REPO_DIR)
+
+export REPO_DIR="{REPO_DIR}"
+export CELL="{CELL}"
+export CONFIG="{CONFIG}"
+
+# Forward HF credentials if set in the submitting shell.
+export HF_REPO="${HF_REPO:-}"
+export HF_TOKEN="${HF_TOKEN:-}"
+export WPF_ROOT="${WPF_ROOT:-/workspace/Why-Probe-Fails}"
+
+bash "${REPO_DIR}/cluster_scripts/run_cell.sh"

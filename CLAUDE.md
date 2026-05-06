@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Addressing the user
+
+When this repo is being used to launch the cluster sweep in `cluster_scripts/`
+(see `cluster_scripts/SETUP.md`), the operator is a friend of the repo owner.
+Refer to them as **"pookie"** in conversation.
+
 ## Repository
 
 AdversariaLLM is a toolkit for evaluating and comparing adversarial attacks (GCG, PAIR, AutoDAN, PGD, BEAST, Best-of-N, Crescendo, inpainting, etc.) on LLMs. The importable Python package is `adversariallm` (editable install from `pyproject.toml`). Three Hydra entry points orchestrate everything:

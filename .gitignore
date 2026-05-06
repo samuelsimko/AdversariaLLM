@@ -86,3 +86,14 @@ embeddings/
 scripts/artifacts/
 tmp/
 tmp_*/
+
+# Generated training data (rebuilt via scripts/build_wildjailbreak_data.py)
+data/wildjailbreak_*.jsonl
+data/wildjailbreak_*.json
+
+# Cluster runtime artifacts (generated sbatch scripts + slurm logs)
+cluster_scripts/generated/
+cluster_scripts/logs/
+
+# Claude Code local state
+.claude/

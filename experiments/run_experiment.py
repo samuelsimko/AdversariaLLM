@@ -515,6 +515,15 @@ def main():
             "stage_dir without redoing prior behaviors."
         ),
     )
+    parser.add_argument(
+        "--run-pipelines",
+        nargs="+",
+        default=None,
+        help=(
+            "Optional list of pipeline names to run (overrides cfg.run_pipelines). "
+            "Useful for per-cell sbatch dispatch where each node only runs one cell."
+        ),
+    )
     args = parser.parse_args()
 
     cfg = load_experiment_config(args.config)
@@ -558,7 +567,7 @@ def main():
     pipelines = cfg.get("pipelines")
     if pipelines is None:
         pipelines = {"default": cfg["pipeline"]}
-    run_pipelines = cfg.get("run_pipelines", list(pipelines.keys()))
+    run_pipelines = args.run_pipelines if args.run_pipelines else cfg.get("run_pipelines", list(pipelines.keys()))
 
     submission_manifest = {
         "experiment_name": meta["experiment_name"],

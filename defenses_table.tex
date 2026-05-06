@@ -1,0 +1,322 @@
+% Defense hyperparameters and loss-term descriptions for the
+% headline_backup_rerun experiment (Llama-3-8B-Instruct and Qwen3-8B).
+% Drop into Overleaf; requires booktabs.
+%
+% Source-of-truth files in the codebase:
+%   experiments/configs/headline_backup_rerun.yaml   training hyperparameters
+%   defenses/jepa_ce.py                              circuit-breaker cells
+%   defenses/triplet_simko.py                        triplet cells
+
+% ---------------------------------------------------------------
+% Table 1: shared hyperparameters
+% ---------------------------------------------------------------
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Training hyperparameters shared across all eight cells
+    (Llama-3-8B / Qwen3-8B \(\times\) \{circuit-breaker, triplet\}
+    \(\times\) \{PRA, no-PRA\}).  Loss-mixing weights, which differ
+    by defense family, are listed in
+    Tables~\ref{tab:cb-loss}--\ref{tab:triplet-loss}.}
+  \label{tab:common-train}
+  \begin{tabular}{@{}l l@{}}
+    \toprule
+    Hyperparameter & Value \\
+    \midrule
+    Optimizer                          & AdamW \\
+    Learning rate                      & $2\!\times\!10^{-4}$ \\
+    Batch size                         & 4 (gradient accum.\ 2 $\Rightarrow$ effective 8) \\
+    Max steps                          & 1500 \\
+    Max sequence length                & 256 \\
+    Save every                         & 500 steps (keep last 3) \\
+    \midrule
+    LoRA rank \(r\)                    & 32 \\
+    LoRA \(\alpha\)                    & 16 \\
+    LoRA dropout                       & 0.05 \\
+    LoRA target modules                & \texttt{q\_proj}, \texttt{v\_proj} \\
+    \midrule
+    Alignment layer                    & 25 \\
+    Predictor architecture             & 2-layer MLP, bottleneck dim 512, GELU \\
+    Predictor LR multiplier            & 5.0 \\
+    \midrule
+    Pair format                        & WildJailbreak (vanilla, adversarial) \\
+    Pair pool size                     & 8\,000 (balanced harmful / benign) \\
+    Harmful corpus                     & 5\,000 WildGuardMix-aligned harmful (prompt, response) \\
+    Benign corpus                      & 5\,000 UltraChat $+$ 5\,000 WildGuardMix-aligned benign \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+% ---------------------------------------------------------------
+% Table 2: CB loss weights
+% ---------------------------------------------------------------
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Loss-mixing weights for circuit-breaker (CB) cells; total
+    training loss in Eq.~\eqref{eq:cb-loss}.}
+  \label{tab:cb-loss}
+  \begin{tabular}{@{}l c l@{}}
+    \toprule
+    Term & Weight & Description \\
+    \midrule
+    \(w_\text{benign}\)    & 0.1   & Cross-entropy on benign helpful-response targets (Eq.~\ref{eq:benign-ce}) \\
+    \(w_\text{kl}\)        & 1.0   & KL of defended logits to base on benign inputs (Eq.~\ref{eq:benign-kl}) \\
+    \(w_\text{harm}\)      & 1.0   & Weight on the CB representation-space regularizer (Eq.~\ref{eq:cb-reg}) \\
+    \(w_\text{pra}\)       & 5 / 0 & PRA loss weight (Eq.~\ref{eq:pra}) --- 5 in PRA cells, 0 in matched controls \\
+    \(\alpha_\text{cb}\)   & 1.0   & CB internal: benign anchor weight \\
+    \(\beta_\text{cb}(t)\) & 1.0   & CB internal: harmful break weight (cosine schedule, \(10\!\to\!1\)) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+% ---------------------------------------------------------------
+% Table 3: triplet loss weights
+% ---------------------------------------------------------------
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Loss-mixing weights for triplet cells; total training
+    loss in Eq.~\eqref{eq:triplet-loss}.  Triplet cells contain no
+    cross-entropy term --- token-level retain pressure comes from
+    the KL term alone, and harmful pressure is purely
+    representation-space.}
+  \label{tab:triplet-loss}
+  \begin{tabular}{@{}l c l@{}}
+    \toprule
+    Term & Weight & Description \\
+    \midrule
+    \(\alpha\)             & 0.5   & Safe triplet (Eq.~\ref{eq:triplet-safe}) \\
+    \(\beta\)              & 0.4   & Unsafe triplet (Eq.~\ref{eq:triplet-unsafe}) \\
+    \(\gamma\)             & 0.9   & KL of defended logits to base on benign inputs (Eq.~\ref{eq:benign-kl}) \\
+    \(w_\text{pra}\)       & 5 / 0 & PRA loss weight (Eq.~\ref{eq:pra}) --- 5 in PRA cells, 0 in matched controls \\
+    \(m_b\)                & 500   & Safe-side margin (Eq.~\ref{eq:triplet-safe}) \\
+    \(m_h\)                & 1500  & Unsafe-side margin (Eq.~\ref{eq:triplet-unsafe}) \\
+    Layers used            & \multicolumn{2}{l}{\(\mathcal{S}=\{20,21,\dots,30\}\), 11-layer stack, mean-pooled per layer} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+% ---------------------------------------------------------------
+% Table 4: per-cell map
+% ---------------------------------------------------------------
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Per-cell configuration.  The matched-pair design varies
+    the harm regularizer (rows) and the PRA weight (columns).  Each
+    of the four configurations is run on both Llama-3-8B-Instruct
+    (\textit{l\_*}) and Qwen3-8B (\textit{q\_*}), yielding eight cells.}
+  \label{tab:cell-config}
+  \begin{tabular}{@{}l c c@{}}
+    \toprule
+                     & PRA (\(w_\text{pra}\!=\!5\)) & No-PRA (\(w_\text{pra}\!=\!0\)) \\
+    \midrule
+    Circuit-breaker  & \texttt{q\_cb\_pra}      / \texttt{l\_cb\_pra}      & \texttt{q\_cb\_no\_pra}      / \texttt{l\_cb\_no\_pra}      \\
+    Triplet          & \texttt{q\_triplet\_pra} / \texttt{l\_triplet\_pra} & \texttt{q\_triplet\_no\_pra} / \texttt{l\_triplet\_no\_pra} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+% ---------------------------------------------------------------
+% Total losses, per family
+% ---------------------------------------------------------------
+\paragraph{Circuit-breaker cells.}
+The per-step training loss is
+\begin{equation}
+  \mathcal{L}_\text{CB}
+  \;=\;
+  w_\text{benign}\,\mathcal{L}^\text{CE}_\text{benign}
+  \;+\;
+  w_\text{kl}\,\mathcal{L}^\text{KL}_\text{benign}
+  \;+\;
+  w_\text{harm}\,\mathcal{L}_\text{CB-reg}
+  \;+\;
+  w_\text{pra}\,\mathcal{L}_\text{PRA},
+  \label{eq:cb-loss}
+\end{equation}
+with weights from Table~\ref{tab:cb-loss}.
+
+\paragraph{Triplet cells.}
+The per-step training loss is
+\begin{equation}
+  \mathcal{L}_\text{tri}
+  \;=\;
+  \alpha\,\mathcal{L}_\text{safe}
+  \;+\;
+  \beta\,\mathcal{L}_\text{unsafe}
+  \;+\;
+  \gamma\,\mathcal{L}^\text{KL}_\text{benign}
+  \;+\;
+  w_\text{pra}\,\mathcal{L}_\text{PRA},
+  \label{eq:triplet-loss}
+\end{equation}
+with weights from Table~\ref{tab:triplet-loss}.  Note that
+Eq.~\ref{eq:triplet-loss} contains no cross-entropy term on either
+harmful or benign target tokens; capability is preserved purely
+through the KL retain term \(\mathcal{L}^\text{KL}_\text{benign}\).
+
+% ---------------------------------------------------------------
+% Loss components --- CE, KL, PRA
+% ---------------------------------------------------------------
+\paragraph{Benign cross-entropy.}
+Standard supervised next-token cross-entropy on benign \emph{(prompt,
+helpful-response)} pairs from the union of UltraChat and the
+WildGuardMix-aligned compliance set.  With prompt tokens masked from
+the loss, the only positions scored are the assistant tokens
+\(t \in \mathcal{A}\).  For a sequence \(y_{1:T}\),
+\begin{equation}
+  \mathcal{L}^\text{CE}_\text{benign}
+  \;=\;
+  -\frac{1}{|\mathcal{A}|}
+   \sum_{t \in \mathcal{A}}
+   \log p_\theta\!\bigl(y_t \,\bigm|\, y_{<t}\bigr).
+  \label{eq:benign-ce}
+\end{equation}
+This term is the standard SFT objective and trains the defended
+model to keep producing the helpful response on benign inputs.  It
+appears only in the CB total loss; the triplet family relies on the
+KL term alone to preserve capability.
+
+\paragraph{Benign KL retain.}
+Top-\(k\) KL divergence between the defended-model and frozen base-model
+distributions, evaluated on benign inputs.  Let \(p_\theta\) be the
+distribution under the defended model (LoRA active) and \(p_\text{base}\)
+the distribution under the same backbone with the LoRA adapter disabled:
+\begin{equation}
+  \mathcal{L}^\text{KL}_\text{benign}
+  \;=\;
+  \mathrm{KL}\!\bigl(\,p_\theta(\cdot \mid x) \;\big\|\; p_\text{base}(\cdot \mid x)\,\bigr),
+  \quad x \sim \text{benign}.
+  \label{eq:benign-kl}
+\end{equation}
+Unlike the CE term, which scores only the helpful target token, the
+KL term anchors the entire output distribution, including refusals,
+formatting, and stylistic choices.  It is present in both the CB and
+triplet total losses.
+
+\paragraph{Predictive Representation Alignment (PRA).}
+\(\mathcal{L}_\text{PRA}\) is the auxiliary loss that distinguishes
+the PRA cells from their matched no-PRA controls.  For each
+\((\text{vanilla}, \text{adversarial})\) sibling pair drawn from the
+WildJailbreak pool, both prompts are forwarded through the defended
+encoder; the assistant-token mean-pooled hidden state at the
+alignment layer is taken for each.  A small MLP predictor
+\(g_\phi\) projects the adversarial representation
+\(\mathbf{h}^{(\text{adv})}\) into the vanilla manifold, and the loss
+is mean-squared error against the corresponding vanilla
+representation \(\mathbf{h}^{(\text{van})}\) with stop-gradient on
+the target:
+\begin{equation}
+  \mathcal{L}_\text{PRA}
+  \;=\;
+  \bigl\lVert\, g_\phi(\mathbf{h}^{(\text{adv})}) \;-\; \mathrm{sg}\bigl[\mathbf{h}^{(\text{van})}\bigr] \,\bigr\rVert_2^2.
+  \label{eq:pra}
+\end{equation}
+Setting \(w_\text{pra}\!=\!0\) gives the matched-pair no-PRA control
+in which every other term is identical, isolating the contribution
+of representation alignment.
+
+% ---------------------------------------------------------------
+% Harm regularizers
+% ---------------------------------------------------------------
+\paragraph{Circuit-breaker regularizer.}
+Following \citet{zou2024improving}.  Let
+\(\mathbf{h}^{(\text{def})}_b,\mathbf{h}^{(\text{def})}_h\) be the
+defended-model assistant-token mean-pooled hidden states at the
+alignment layer for benign and harmful inputs, and
+\(\mathbf{h}^{(\text{base})}_b,\mathbf{h}^{(\text{base})}_h\) the
+corresponding states with the LoRA adapter disabled.  The CB
+regularizer combines a benign anchor with a harmful break-away:
+\begin{equation}
+  \mathcal{L}_\text{CB-reg}
+  \;=\;
+  \alpha_\text{cb}\,\bigl\lVert \mathbf{h}^{(\text{def})}_b - \mathbf{h}^{(\text{base})}_b \bigr\rVert_2^2
+  \;+\;
+  \beta_\text{cb}(t)\,\operatorname{ReLU}\!\Bigl(\cos\!\bigl(\mathbf{h}^{(\text{def})}_h,\,\mathbf{h}^{(\text{base})}_h\bigr)\Bigr).
+  \label{eq:cb-reg}
+\end{equation}
+The first term anchors benign representations to the base.  The
+second pushes harmful representations to be orthogonal to their base
+counterpart; the ReLU clips the loss once cosine drops to zero, so
+the loss does not pull representations past \(90^\circ\).
+\(\beta_\text{cb}(t)\) is a cosine schedule starting at
+\(10\beta_\text{cb}\) and decaying to \(\beta_\text{cb}\) over the
+full run, encouraging early aggressive disruption.
+
+\paragraph{Triplet regularizer.}
+Proposed by \citet{simko2025}.  Two margin-hinge triplets in
+representation space, one per polarity.  Let
+\(\mathcal{S}=\{20,21,\dots,30\}\) be the layer stack used for
+representations, and let \(\mathbf{c}_h = \tfrac{1}{n_h}\sum_i
+\mathbf{h}^{(\text{def})}_{h,i}\) be the in-batch harmful centroid.
+The hybrid distance combines \(\ell_2\) with a clipped-cosine penalty,
+\begin{equation}
+  d(\mathbf{x},\mathbf{y})
+  \;=\;
+  \lVert \mathbf{x}-\mathbf{y}\rVert_2
+  \;+\;
+  10\,\operatorname{ReLU}\!\bigl(1 - \cos(\bar{\mathbf{x}},\bar{\mathbf{y}})\bigr),
+  \label{eq:triplet-d}
+\end{equation}
+where \(\bar{\mathbf{x}}\) is the \(\ell_2\)-normalized
+\(\mathbf{x}\).  The two hinges are
+\begin{align}
+  \mathcal{L}_\text{safe}
+  &= \frac{1}{n_b}\sum_{j=1}^{n_b}
+     \operatorname{ReLU}\!\Bigl(
+       d\!\bigl(\mathbf{h}^{(\text{def})}_{b,j},\,\mathbf{h}^{(\text{base})}_{b,j}\bigr)
+       - d\!\bigl(\mathbf{h}^{(\text{def})}_{b,j},\,\mathbf{c}_h\bigr)
+       + m_b
+     \Bigr),
+     \label{eq:triplet-safe} \\[2pt]
+  \mathcal{L}_\text{unsafe}
+  &= \frac{1}{n_h}\sum_{i=1}^{n_h}
+     \operatorname{ReLU}\!\Bigl(
+       d\!\bigl(\mathbf{h}^{(\text{def})}_{h,i},\,\mathbf{c}_h\bigr)
+       - d\!\bigl(\mathbf{h}^{(\text{def})}_{h,i},\,\mathbf{h}^{(\text{base})}_{h,i}\bigr)
+       + m_h
+     \Bigr),
+     \label{eq:triplet-unsafe}
+\end{align}
+each in standard triplet form
+\(\operatorname{ReLU}\!\bigl(d(a,p) - d(a,n) + m\bigr)\):
+
+\smallskip
+\noindent
+\begin{tabular}{@{}l l l l@{}}
+                                       & Anchor                          & Positive (close)                  & Negative (far)                    \\
+  Safe (Eq.~\ref{eq:triplet-safe})     & \(\mathbf{h}^{(\text{def})}_b\) & \(\mathbf{h}^{(\text{base})}_b\)  & \(\mathbf{c}_h\)                  \\
+  Unsafe (Eq.~\ref{eq:triplet-unsafe}) & \(\mathbf{h}^{(\text{def})}_h\) & \(\mathbf{c}_h\)                  & \(\mathbf{h}^{(\text{base})}_h\)  \\
+\end{tabular}
+
+\smallskip
+\noindent
+The safe hinge keeps benign defended representations close to their
+base counterpart while pushing them away from the harmful centroid
+by margin \(m_b\!=\!500\).  The unsafe hinge clusters harmful
+representations around the centroid while pushing them away from
+their base counterpart by the larger margin \(m_h\!=\!1500\) (breaking
+requires more displacement than anchoring).  The clipped-cosine term
+in Eq.~\ref{eq:triplet-d} activates only when the angle exceeds
+\(90^\circ\) and fades once representations diverge in direction.
+
+% ---------------------------------------------------------------
+% Bibliography stubs
+% ---------------------------------------------------------------
+% @inproceedings{zou2024improving,
+%   title={Improving Alignment and Robustness with Circuit Breakers},
+%   author={Zou, Andy and Phan, Long and Wang, Justin and Duenas, Derek and Lin, Maxwell and Andriushchenko, Maksym and Wang, Rowan and Kolter, Zico and Fredrikson, Matt and Hendrycks, Dan},
+%   booktitle={NeurIPS},
+%   year={2024}
+% }
+%
+% @article{simko2025,
+%   title={...},
+%   author={Simko, Samuel and ...},
+%   year={2025}
+% }

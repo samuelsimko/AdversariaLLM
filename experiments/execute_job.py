@@ -78,6 +78,14 @@ def main() -> int:
 
     if completed.returncode == 0:
         ready_path.touch()
+        try:
+            repo_root = str(Path(__file__).resolve().parents[1])
+            if repo_root not in sys.path:
+                sys.path.insert(0, repo_root)
+            from experiments.hf_sync import sync_after_stage
+            sync_after_stage(stage_dir, fingerprint, args.job_type)
+        except Exception as exc:  # never fail the job for a sync hiccup
+            print(f"[execute_job] hf_sync error: {exc}", file=sys.stderr)
     else:
         failed_path.touch()
 

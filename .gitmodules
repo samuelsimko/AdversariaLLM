@@ -4,3 +4,6 @@
 [submodule "SafeSwitch"]
 	path = SafeSwitch
 	url = https://github.com/samuelsimko/SafeSwitch.git
+[submodule "latent-adversarial-training"]
+	path = latent-adversarial-training
+	url = https://github.com/aengusl/latent-adversarial-training.git
