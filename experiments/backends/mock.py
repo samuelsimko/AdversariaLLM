@@ -12,6 +12,7 @@ class MockBackend:
         output_log: Optional[str] = None,
         error_log: Optional[str] = None,
         depends_on: Optional[List[str]] = None,
+        gres_override: Optional[str] = None,
     ) -> Optional[str]:
         print("\n🧪 MOCK SUBMIT")
         print("Job name:", name)

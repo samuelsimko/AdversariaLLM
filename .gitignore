@@ -86,3 +86,8 @@ embeddings/
 scripts/artifacts/
 tmp/
 tmp_*/
+
+# Regenerable training data (built by scripts/build_*.py from public HF datasets)
+data/wildjailbreak_*.json
+data/wildjailbreak_*.jsonl
+data/or_bench_train_*responses*.jsonl

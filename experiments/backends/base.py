@@ -13,6 +13,7 @@ class Backend(ABC):
         output_log: str,
         error_log: str,
         depends_on: Optional[List[str]] = None,
+        gres_override: Optional[str] = None,
     ) -> Optional[str]:
         """
         Submit a job.

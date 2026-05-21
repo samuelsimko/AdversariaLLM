@@ -138,6 +138,7 @@ class LocalGPUBackend(Backend):
         output_log: str,
         error_log: str,
         depends_on: Optional[List[str]] = None,
+        gres_override: Optional[str] = None,
     ) -> str:
         job_id = str(uuid.uuid4())[:8]
 

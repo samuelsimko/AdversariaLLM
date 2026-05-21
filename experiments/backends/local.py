@@ -12,6 +12,7 @@ class LocalBackend(Backend):
         output_log,
         error_log,
         depends_on=None,
+        gres_override=None,
     ):
         print(f"▶ [LOCAL] {name}")
         print("  ", " ".join(command))

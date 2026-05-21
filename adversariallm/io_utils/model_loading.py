@@ -182,6 +182,11 @@ def load_model_and_tokenizer(
             tokenizer.model_max_length = 32768
         case path if "openai/gpt-oss" in path:
             tokenizer.model_max_length = 128000
+        case path if "swiss-ai/apertus" in path:
+            # Apertus ships with model_max_length=1e30 (unset). max_position_embeddings is
+            # 65536 (RoPE-scaled from an 8k original). Cap at 8192 to match the original
+            # positional encoding bound and keep attack memory reasonable.
+            tokenizer.model_max_length = 8192
     if tokenizer.model_max_length > 262144:
         raise ValueError(
             f"Model max length {tokenizer.model_max_length} is probably too large."

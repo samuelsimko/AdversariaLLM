@@ -10,15 +10,17 @@ class SlurmBackend(Backend):
         self,
         partition,
         account,
-        gres,
+        gres=None,
         *,
         workdir: str,
         env_file: str | None = None,
         venv_activate: str | None = None,
         cpus_per_task: int | None = None,
         mem: str | None = None,
+        mem_per_cpu: str | None = None,
         qos: str | None = None,
         constraint: str | None = None,
+        gpus: str | int | None = None,
     ):
         self.partition = partition
         self.account = account
@@ -28,8 +30,10 @@ class SlurmBackend(Backend):
         self.venv_activate = venv_activate
         self.cpus_per_task = cpus_per_task
         self.mem = mem
+        self.mem_per_cpu = mem_per_cpu
         self.qos = qos
         self.constraint = constraint
+        self.gpus = gpus
 
     def submit(
         self,
@@ -40,22 +44,39 @@ class SlurmBackend(Backend):
         output_log: str,
         error_log: str,
         depends_on: Optional[List[str]] = None,
+        gres_override: Optional[str] = None,
     ) -> str:
         sbatch_cmd = [
             "sbatch",
             "--parsable",
-            "-p", self.partition,
             "--account", self.account,
-            "--gres", self.gres,
             "--time", time,
             "--job-name", name,
             "--output", output_log,
             "--error", error_log,
         ]
+        if self.partition:
+            sbatch_cmd += ["-p", self.partition]
+        # gpus can be either an int ("--gpus=1") or "<type>:N" ("--gpus=nvidia_a100_80gb_pcie:1").
+        # On Euler the type-form acts as a partition router: slurm picks a partition that
+        # *has* that GPU type (e.g. gpupr.4h), but inside that partition you may still get a
+        # sibling SKU (e.g. A100-40GB instead of 80GB). That's fine for our compatibility
+        # bound (sm_80 != sm_120 Blackwell). The `--gres=gpu:<type>:N` form is stricter but
+        # requires a matching partition pin; without it Euler rejects with "Requested node
+        # configuration is not available". Emit --gpus and let the user pin partition if
+        # they need stricter typing.
+        if self.gpus is not None:
+            sbatch_cmd += [f"--gpus={self.gpus}"]
+        # Per-call gres override (e.g. attack stages want gpumem:40g, train wants 80g).
+        effective_gres = gres_override if gres_override is not None else self.gres
+        if effective_gres:
+            sbatch_cmd += ["--gres", effective_gres]
         if self.cpus_per_task is not None:
             sbatch_cmd += ["--cpus-per-task", str(self.cpus_per_task)]
         if self.mem is not None:
             sbatch_cmd += ["--mem", str(self.mem)]
+        if self.mem_per_cpu is not None:
+            sbatch_cmd += ["--mem-per-cpu", str(self.mem_per_cpu)]
         if self.qos is not None:
             sbatch_cmd += ["--qos", self.qos]
         if self.constraint is not None:

@@ -77,6 +77,14 @@ def get_time(cluster: dict, key: str, default: str) -> str:
     return cluster.get(f"time_{key}", default)
 
 
+def get_gres_override(cluster: dict, key: str) -> Optional[str]:
+    """Per-stage gres override (e.g. attack stages want gpumem:40g, train wants 80g).
+    Looks for cluster.gres_<key>, returns None if unset (caller falls back to default)."""
+    if "gres" in cluster and isinstance(cluster["gres"], dict) and key in cluster["gres"]:
+        return cluster["gres"][key]
+    return cluster.get(f"gres_{key}")
+
+
 def is_stage_done(out_dir: Path, fingerprint: dict) -> bool:
     fp_path = out_dir / "fingerprint.json"
     ready = out_dir / "READY"
@@ -474,16 +482,18 @@ def create_backend(args, cluster: dict, *, workdir: str, env_file: str | None, v
         return LocalBackend()
     if args.backend == "slurm":
         return SlurmBackend(
-            partition=cluster["partition"],
+            partition=cluster.get("partition"),
             account=cluster["account"],
-            gres=cluster["gres"],
+            gres=cluster.get("gres"),
             workdir=workdir,
             env_file=env_file,
             venv_activate=venv_activate,
             cpus_per_task=cluster.get("cpus_per_task"),
             mem=cluster.get("mem"),
+            mem_per_cpu=cluster.get("mem_per_cpu"),
             qos=cluster.get("qos"),
             constraint=cluster.get("constraint"),
+            gpus=cluster.get("gpus"),
         )
     if args.backend == "mock":
         return MockBackend()
@@ -666,6 +676,7 @@ def main():
                 time=get_time(cluster, "train", "04:00:00"),
                 output_log=str(stdout_log),
                 error_log=str(stderr_log),
+                gres_override=get_gres_override(cluster, "train"),
             )
             append_submission_record(
                 jobs_path,
@@ -878,6 +889,7 @@ def main():
                     output_log=str(stdout_log),
                     error_log=str(stderr_log),
                     depends_on=deps,
+                    gres_override=get_gres_override(cluster, "benign"),
                 )
                 append_submission_record(
                     jobs_path,
@@ -1035,6 +1047,7 @@ def main():
                     output_log=str(stdout_log),
                     error_log=str(stderr_log),
                     depends_on=deps,
+                    gres_override=get_gres_override(cluster, "probe"),
                 )
                 append_submission_record(
                     jobs_path,
@@ -1076,6 +1089,7 @@ def main():
                 output_log=str(p["stdout_log"]),
                 error_log=str(p["stderr_log"]),
                 depends_on=p["deps"],
+                gres_override=get_gres_override(cluster, "attack"),
             )
             append_submission_record(
                 jobs_path,
