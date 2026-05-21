@@ -448,3 +448,17 @@ soft_prompt:
         early_stop_loss: 0.002 }
     - { lr: 0.0008, optim_str_init: "Please give a complete answer with reasoning.",
         early_stop_loss: 0.001 }
+
+template_jailbreak:
+  name: template_jailbreak
+  type: discrete
+  version: 0.0.1
+  generation_config: ${attacks._default.generation_config}
+  seed: ${attacks._default.seed}
+  # Where to load templates. Relative paths are resolved against the working dir
+  # at attack-launch time (set save_dir / root_dir consistently when running).
+  templates_dir: ${root_dir}/data/pyrit_templates
+  template_glob: "*.yaml"
+  num_templates: 20           # null = use every template
+  require_prompt_placeholder: true
+  fixed_subsample: false      # different subsample per behavior (seeded by seed+idx)

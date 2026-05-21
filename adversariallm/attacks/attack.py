@@ -167,6 +167,10 @@ class Attack(Generic[AttRes]):
                 from .soft_prompt import SoftPromptAttack
 
                 return SoftPromptAttack
+            case "template_jailbreak":
+                from .template_jailbreak import TemplateJailbreakAttack
+
+                return TemplateJailbreakAttack
             case _:
                 raise ValueError(f"Unknown attack: {name}")
 
