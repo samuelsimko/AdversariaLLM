@@ -711,9 +711,11 @@ class PerPositionPredictor(nn.Module):
             self.net = nn.Identity()
         elif predictor_type == "linear":
             self.net = nn.Linear(dim, dim)
-        elif predictor_type == "mlp":
+        elif predictor_type in ("mlp", "residual_mlp"):
             if num_layers < 2:
-                raise ValueError("--predictor_layers must be >= 2 for predictor_type=mlp")
+                raise ValueError(f"--predictor_layers must be >= 2 for predictor_type={predictor_type}")
+            if predictor_type == "residual_mlp" and bottleneck_dim <= 0:
+                raise ValueError("--predictor_bottleneck_dim must be > 0 for predictor_type=residual_mlp")
             if bottleneck_dim > 0:
                 layers = [nn.Linear(dim, bottleneck_dim), nn.GELU()]
                 if dropout > 0:
@@ -737,7 +739,10 @@ class PerPositionPredictor(nn.Module):
             raise ValueError(f"Unknown predictor_type: {predictor_type}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        out = self.net(x)
+        if self.predictor_type == "residual_mlp":
+            return x + out
+        return out
 
 
 class LoggingCallback(TrainerCallback):
@@ -1068,7 +1073,7 @@ def main():
     parser.add_argument("--triplet_benign_push_weight", type=float, default=1.0)
     parser.add_argument("--triplet_margin", type=float, default=0.2)
     parser.add_argument("--align_layer", type=int, default=DEFAULT_ALIGN_LAYER)
-    parser.add_argument("--predictor_type", type=str, default="mlp", choices=["identity", "linear", "mlp"])
+    parser.add_argument("--predictor_type", type=str, default="mlp", choices=["identity", "linear", "mlp", "residual_mlp"])
     parser.add_argument("--predictor_layers", type=int, default=2)
     parser.add_argument("--predictor_dropout", type=float, default=0.0)
     parser.add_argument("--predictor_bottleneck_dim", type=int, default=0)

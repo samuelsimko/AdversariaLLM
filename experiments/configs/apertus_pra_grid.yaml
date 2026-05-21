@@ -1,0 +1,309 @@
+# Apertus-8B PRA grid: CE-floor vs Circuit-Breakers × 4 PRA variants.
+#
+# Cells (one per (harm_regularizer, predictor) pair):
+#   a_ce_no_pra      ce_floor,        w_jepa=0  (no PRA at all)
+#   a_ce_pra         ce_floor,        mlp 2L,  bottleneck=256
+#   a_ce_pra_id      ce_floor,        identity (PRA but linear/no params)
+#   a_ce_pra_big     ce_floor,        residual_mlp 3L, bottleneck=512
+#   a_cb_no_pra      circuit_breaker, w_jepa=0
+#   a_cb_pra         circuit_breaker, mlp 2L, bottleneck=256
+#   a_cb_pra_id      circuit_breaker, identity
+#   a_cb_pra_big     circuit_breaker, residual_mlp 3L, bottleneck=512
+#
+# Stages per cell: train -> attack (direct, prefilling, soft_prompt) -> mmlu.
+#
+# Data prerequisites (build with scripts/build_wildjailbreak_data.py if absent):
+#   data/wildjailbreak_harmful.json   (cb_path)
+#   data/wildjailbreak_pairs.jsonl    (pair_path, pair_format=wildjailbreak)
+#   data/wildjailbreak_benign.jsonl   (extra_benign_path)
+#
+# Submit from a login node:
+#   python experiments/run_experiment.py \
+#     --config experiments/configs/apertus_pra_grid.yaml --backend slurm
+
+meta:
+  experiment_name: apertus_pra_grid
+  output_root: runs/experiments
+
+runtime:
+  python_bin: /cluster/project/schoelkopf/ssimko/AdversariaLLM/venv/bin/python
+  venv_activate: sbatch/common.sh    # loads modules + activates venv + HF cache + CUBLAS env
+  num_gpus: 1                        # used by local_gpu backend; ignored by slurm backend
+  continue_on_attack_failure: true
+
+cluster:
+  # GPU routing recipe (verified via probe jobs on Euler):
+  #   gpus="nvidia_a100_80gb_pcie:1"  – routes to a partition containing A100
+  #   constraint="cuda12"             – Blackwell (RTX PRO 6000) nodes lack the cuda12
+  #                                     feature, so this excludes them. Without it the
+  #                                     scheduler sometimes drops the GPU-type qualifier
+  #                                     and lands on sm_120 which our venv's torch 2.7.1+cu126
+  #                                     does not support.
+  #   gres="gpumem:80g"               – the `gpus=<type>` form is non-binding (slurm sometimes
+  #                                     gives a 40GB A100 sibling and we OOM at bs=2 max_len=256).
+  #                                     gpumem:80g strictly excludes the 40GB cards.
+  partition: null
+  account: ls_schoel
+  gpus: "nvidia_a100_80gb_pcie:1"
+  gres: "gpumem:80g"      # default; per-stage overrides below
+  # Per-stage GPU memory: training needs 80g (JEPA double-forward + KL anchor); inference
+  # stages (attack, benign_eval) fit comfortably in 40g, which has a much shorter queue.
+  gres_train: "gpumem:80g"
+  gres_attack: "gpumem:40g"
+  gres_benign: "gpumem:40g"
+  constraint: cuda12
+  cpus_per_task: 8
+  mem_per_cpu: 12G
+  time_train: "04:00:00"   # bumped from 2h: a_cb_pra/a_cb_pra_id hit 2h walltime on slower nodes
+  time_attack: "12:00:00"   # bumped from 4h: soft_prompt × 100 behaviors needs more headroom
+  time_benign: "02:00:00"
+
+classifiers: ["local:strongreject"]
+
+datasets:
+  # Two sizes: cheaper attacks (direct, prefilling) get the wider 300-behavior slice;
+  # the expensive soft_prompt attack runs on 100.
+  adv_behaviors_n300:
+    name: adv_behaviors
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 300))"
+  adv_behaviors_n100:
+    name: adv_behaviors
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 100))"
+  # OR-Bench (over-refusal): 300 benign-looking queries. Judge = local:overrefusal (Qwen3-8B).
+  or_bench_n300:
+    name: or_bench
+    config_name: or-bench-hard-1k
+    split: train
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 300))"
+
+models:
+  apertus:
+    id: swiss-ai/Apertus-8B-Instruct-2509
+
+# ---------------------- Shared training knobs ----------------------
+# Per-cell overrides only the harm regularizer + predictor block + w_jepa.
+common: &common_train_args
+  num_max_steps: 1500
+  batch_size: 2          # OOM on A100-40GB at bs=4 max_len=256 (Apertus 8B + LoRA + JEPA double-forward).
+  grad_accum: 4          # Effective batch size unchanged (2*4=8 = 4*2).
+  ultrachat_samples: 5000
+  limit_cb: 5000
+  pair_limit: 100000
+  pair_sample_size: 8000
+  pair_sample_balanced: true
+  max_length: 256
+  lr: 0.0002
+  jepa_target_encoder: defended
+  align_layer: 25
+  jepa_target: prompt_only
+  report_to: wandb
+  save_total_limit: 1
+  logging_steps: 10
+  save_steps: 1500
+  lora_r: 32
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: q_proj,v_proj
+  pair_path: data/wildjailbreak_pairs.jsonl
+  pair_format: wildjailbreak
+  extra_benign_path: data/wildjailbreak_benign.jsonl
+  extra_benign_samples: 5000
+  include_pair_harmful_in_harm_ce: false
+  w_benign: 0.1
+  w_harm: 1.0
+  w_kl: 1.0
+  # Predictor defaults — overridden per cell to switch PRA variant.
+  predictor_type: mlp
+  predictor_layers: 2
+  predictor_bottleneck_dim: 256
+  predictor_dropout: 0.0
+  predictor_lr_multiplier: 1.0
+  # CE-floor knob (only used when harm_regularizer=ce_floor).
+  harm_ce_min: 5.0
+  # CB knobs (only used when harm_regularizer=circuit_breaker).
+  cb_beta_start_mult: 10.0
+  cb_beta_decay_fraction: 1.0
+
+defenses:
+  # ----- CE-floor cells -----
+  a_ce_no_pra:
+    script: defenses/jepa_ce.py
+    base_model: apertus
+    output_subdir: a_ce_no_pra
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: ce_floor
+      w_jepa: 0.0
+
+  a_ce_pra:
+    script: defenses/jepa_ce.py
+    base_model: apertus
+    output_subdir: a_ce_pra
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: ce_floor
+      w_jepa: 5.0
+
+  a_ce_pra_id:
+    script: defenses/jepa_ce.py
+    base_model: apertus
+    output_subdir: a_ce_pra_id
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: ce_floor
+      w_jepa: 5.0
+      predictor_type: identity
+      predictor_bottleneck_dim: 0      # ignored by identity, set 0 for clarity
+
+  a_ce_pra_big:
+    script: defenses/jepa_ce.py
+    base_model: apertus
+    output_subdir: a_ce_pra_big
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: ce_floor
+      w_jepa: 5.0
+      predictor_type: residual_mlp
+      predictor_layers: 3
+      predictor_bottleneck_dim: 512
+
+  # ----- Circuit-breaker cells -----
+  a_cb_no_pra:
+    script: defenses/jepa_ce.py
+    base_model: apertus
+    output_subdir: a_cb_no_pra
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      w_jepa: 0.0
+
+  a_cb_pra:
+    script: defenses/jepa_ce.py
+    base_model: apertus
+    output_subdir: a_cb_pra
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      w_jepa: 5.0
+
+  a_cb_pra_id:
+    script: defenses/jepa_ce.py
+    base_model: apertus
+    output_subdir: a_cb_pra_id
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      w_jepa: 5.0
+      predictor_type: identity
+      predictor_bottleneck_dim: 0
+
+  a_cb_pra_big:
+    script: defenses/jepa_ce.py
+    base_model: apertus
+    output_subdir: a_cb_pra_big
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_train_args
+      harm_regularizer: circuit_breaker
+      w_jepa: 5.0
+      predictor_type: residual_mlp
+      predictor_layers: 3
+      predictor_bottleneck_dim: 512
+
+  # Unprotected Apertus baseline: no defense training, attacks run on the raw model.
+  a_base:
+    script: null                  # skip train stage
+    base_model: apertus
+    output_subdir: a_base
+    attack_uses_adapter: false    # do NOT inject +model_overrides.peft_path
+
+# ---------------------- Attacks ----------------------
+attacks:
+  direct_300:
+    attack: direct
+    dataset: adv_behaviors_n300
+  prefilling_300:
+    attack: prefilling
+    dataset: adv_behaviors_n300
+  soft_prompt_100:
+    attack: soft_prompt
+    dataset: adv_behaviors_n100
+  # OR-Bench: send raw benign queries via `direct` attack, judge with overrefusal.
+  direct_orbench_300:
+    attack: direct
+    dataset: or_bench_n300
+    classifiers: ["local:overrefusal"]
+  # PyRIT template jailbreak: 20 random templates per behavior, judged with strongreject.
+  template_jb_300_n20:
+    attack: template_jailbreak
+    dataset: adv_behaviors_n300
+    attack_overrides:
+      num_templates: 20
+
+# ---------------------- Benign eval ----------------------
+benign_evals:
+  mmlu_smoke:
+    tasks: mmlu
+    limit: 200
+
+# Submit faster attacks before the slow soft_prompt across all cells.
+attack_priority:
+  - direct_300
+  - prefilling_300
+  - soft_prompt_100
+
+# ---------------------- Pipelines ----------------------
+pipelines:
+  a_ce_no_pra:
+    - { stage: train,  defense: a_ce_no_pra }
+    - { stage: attack, defense: a_ce_no_pra, attacks: [direct_300, prefilling_300, soft_prompt_100, direct_orbench_300, template_jb_300_n20] }
+    - { stage: benign_eval, defense: a_ce_no_pra, benign_eval: mmlu_smoke }
+  a_ce_pra:
+    - { stage: train,  defense: a_ce_pra }
+    - { stage: attack, defense: a_ce_pra, attacks: [direct_300, prefilling_300, soft_prompt_100, direct_orbench_300, template_jb_300_n20] }
+    - { stage: benign_eval, defense: a_ce_pra, benign_eval: mmlu_smoke }
+  a_ce_pra_id:
+    - { stage: train,  defense: a_ce_pra_id }
+    - { stage: attack, defense: a_ce_pra_id, attacks: [direct_300, prefilling_300, soft_prompt_100, direct_orbench_300, template_jb_300_n20] }
+    - { stage: benign_eval, defense: a_ce_pra_id, benign_eval: mmlu_smoke }
+  a_ce_pra_big:
+    - { stage: train,  defense: a_ce_pra_big }
+    - { stage: attack, defense: a_ce_pra_big, attacks: [direct_300, prefilling_300, soft_prompt_100, direct_orbench_300, template_jb_300_n20] }
+    - { stage: benign_eval, defense: a_ce_pra_big, benign_eval: mmlu_smoke }
+  a_cb_no_pra:
+    - { stage: train,  defense: a_cb_no_pra }
+    - { stage: attack, defense: a_cb_no_pra, attacks: [direct_300, prefilling_300, soft_prompt_100, direct_orbench_300, template_jb_300_n20] }
+    - { stage: benign_eval, defense: a_cb_no_pra, benign_eval: mmlu_smoke }
+  a_cb_pra:
+    - { stage: train,  defense: a_cb_pra }
+    - { stage: attack, defense: a_cb_pra, attacks: [direct_300, prefilling_300, soft_prompt_100, direct_orbench_300, template_jb_300_n20] }
+    - { stage: benign_eval, defense: a_cb_pra, benign_eval: mmlu_smoke }
+  a_cb_pra_id:
+    - { stage: train,  defense: a_cb_pra_id }
+    - { stage: attack, defense: a_cb_pra_id, attacks: [direct_300, prefilling_300, soft_prompt_100, direct_orbench_300, template_jb_300_n20] }
+    - { stage: benign_eval, defense: a_cb_pra_id, benign_eval: mmlu_smoke }
+  a_cb_pra_big:
+    - { stage: train,  defense: a_cb_pra_big }
+    - { stage: attack, defense: a_cb_pra_big, attacks: [direct_300, prefilling_300, soft_prompt_100, direct_orbench_300, template_jb_300_n20] }
+    - { stage: benign_eval, defense: a_cb_pra_big, benign_eval: mmlu_smoke }
+
+  # Unprotected baseline: no train stage; just attacks + benign on raw Apertus.
+  a_base:
+    - { stage: attack, defense: a_base, attacks: [direct_300, prefilling_300, soft_prompt_100, direct_orbench_300, template_jb_300_n20] }
+    - { stage: benign_eval, defense: a_base, benign_eval: mmlu_smoke }
+
+
+

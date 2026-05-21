@@ -1,0 +1,152 @@
+# Smoke for apertus_pra_grid.yaml.
+#
+# Two cells (one per harm regularizer) to exercise both CE and CB paths plus the
+# new residual_mlp predictor:
+#   a_ce_pra_big_smoke   ce_floor + residual_mlp 3L bottleneck=512  (tests new predictor)
+#   a_cb_pra_smoke       circuit_breaker + default mlp predictor    (tests CB path)
+#
+# All knobs shrunk: 50 steps, 5 behaviors, mmlu limit 25.
+# Goal: validate the full train -> attack(direct, prefilling, soft_prompt) -> mmlu
+# wiring end-to-end before spending real GPU-hours on apertus_pra_grid.yaml.
+#
+# Submit:
+#   python experiments/run_experiment.py \
+#     --config experiments/configs/apertus_pra_grid_smoke.yaml --backend slurm
+# Or (single sbatch, sequential):
+#   CONFIG=experiments/configs/apertus_pra_grid_smoke.yaml \
+#     sbatch --gpus=1 --time=04:00:00 sbatch/experiment.sbatch
+
+meta:
+  experiment_name: apertus_pra_grid_smoke
+  output_root: runs/experiments
+
+runtime:
+  python_bin: /cluster/project/schoelkopf/ssimko/AdversariaLLM/venv/bin/python
+  venv_activate: sbatch/common.sh
+  num_gpus: 1
+  continue_on_attack_failure: true
+
+cluster:
+  # GPU routing on Euler is finicky. The combination we landed on:
+  #   gpus="nvidia_a100_80gb_pcie:1"  – routes the job into a partition that has A100
+  #   constraint="cuda12"             – Blackwell (RTX PRO 6000) nodes lack the cuda12
+  #                                     feature, so this guarantees we get an A100 instead.
+  # Without the constraint, the scheduler sometimes drops the type qualifier and lands the
+  # job on RTX PRO 6000 (sm_120) which torch 2.7.1+cu126 in our venv can't run.
+  # The actual SKU you get may be A100-40GB or A100-80GB; both are sm_80 and fit our 8B model.
+  partition: null
+  account: ls_schoel
+  gpus: "nvidia_a100_80gb_pcie:1"
+  constraint: cuda12
+  cpus_per_task: 8
+  mem_per_cpu: 12G
+  time_train: "00:45:00"
+  time_attack: "01:00:00"
+  time_benign: "00:30:00"
+
+classifiers: ["local:strongreject"]
+
+datasets:
+  adv_behaviors_n5:
+    name: adv_behaviors
+    seed: 0
+    shuffle: true
+    idx: "list(range(0, 5))"
+
+models:
+  apertus:
+    id: swiss-ai/Apertus-8B-Instruct-2509
+
+common: &common_smoke_train_args
+  num_max_steps: 50
+  batch_size: 2
+  grad_accum: 1
+  ultrachat_samples: 200
+  limit_cb: 200
+  pair_limit: 400
+  pair_sample_size: 200
+  pair_sample_balanced: true
+  max_length: 128
+  lr: 0.0002
+  jepa_target_encoder: defended
+  align_layer: 25
+  jepa_target: prompt_only
+  report_to: none                     # no wandb for smoke
+  save_total_limit: 1
+  logging_steps: 5
+  save_steps: 50
+  lora_r: 32
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: q_proj,v_proj
+  pair_path: data/wildjailbreak_pairs.jsonl
+  pair_format: wildjailbreak
+  extra_benign_path: data/wildjailbreak_benign.jsonl
+  extra_benign_samples: 200
+  include_pair_harmful_in_harm_ce: false
+  w_benign: 0.1
+  w_harm: 1.0
+  w_kl: 1.0
+  harm_ce_min: 5.0
+  cb_beta_start_mult: 10.0
+  cb_beta_decay_fraction: 1.0
+  predictor_lr_multiplier: 1.0
+
+defenses:
+  a_ce_pra_big_smoke:
+    script: defenses/jepa_ce.py
+    base_model: apertus
+    output_subdir: a_ce_pra_big_smoke
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_smoke_train_args
+      harm_regularizer: ce_floor
+      w_jepa: 5.0
+      predictor_type: residual_mlp
+      predictor_layers: 3
+      predictor_bottleneck_dim: 512
+
+  a_cb_pra_smoke:
+    script: defenses/jepa_ce.py
+    base_model: apertus
+    output_subdir: a_cb_pra_smoke
+    data: { cb_path: data/wildjailbreak_harmful.json }
+    train_args:
+      <<: *common_smoke_train_args
+      harm_regularizer: circuit_breaker
+      w_jepa: 5.0
+      predictor_type: mlp
+      predictor_layers: 2
+      predictor_bottleneck_dim: 256
+
+attacks:
+  direct_5:
+    attack: direct
+    dataset: adv_behaviors_n5
+  prefilling_5:
+    attack: prefilling
+    dataset: adv_behaviors_n5
+  soft_prompt_5:
+    attack: soft_prompt
+    dataset: adv_behaviors_n5
+    attack_overrides:
+      num_steps: 100       # cap iterations for smoke (default 1000)
+
+benign_evals:
+  mmlu_smoke:
+    tasks: mmlu
+    limit: 25
+
+attack_priority:
+  - direct_5
+  - prefilling_5
+  - soft_prompt_5
+
+pipelines:
+  a_ce_pra_big_smoke:
+    - { stage: train,  defense: a_ce_pra_big_smoke }
+    - { stage: attack, defense: a_ce_pra_big_smoke, attacks: [direct_5, prefilling_5, soft_prompt_5] }
+    - { stage: benign_eval, defense: a_ce_pra_big_smoke, benign_eval: mmlu_smoke }
+  a_cb_pra_smoke:
+    - { stage: train,  defense: a_cb_pra_smoke }
+    - { stage: attack, defense: a_cb_pra_smoke, attacks: [direct_5, prefilling_5, soft_prompt_5] }
